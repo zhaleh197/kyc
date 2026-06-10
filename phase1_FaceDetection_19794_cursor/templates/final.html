@@ -1,0 +1,1297 @@
+<!DOCTYPE html>
+<html lang="fa">
+<head>
+  <meta charset="UTF-8">
+  <title>سیستم پردازش چهره - مرحله به مرحله</title>
+  <style>
+
+
+
+/* Face matching */
+
+.face-match-container {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 20px;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.upload-row {
+  display: flex;
+  gap: 20px;
+  margin-bottom: 30px;
+}
+
+.image-upload-box {
+  flex: 1;
+  background: #f8f9fa;
+  border-radius: 10px;
+  padding: 15px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+}
+
+.upload-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+}
+
+.upload-header h4 {
+  margin: 0;
+  color: #333;
+  font-size: 16px;
+}
+
+.upload-btn {
+  background: #e9ecef;
+  color: #495057;
+  padding: 8px 15px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.3s;
+}
+
+.upload-btn:hover {
+  background: #dee2e6;
+}
+
+.preview-container {
+  position: relative;
+  width: 100%;
+  height: 250px;
+  border: 2px dashed #ced4da;
+  border-radius: 8px;
+  overflow: hidden;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.preview-image {
+  max-width: 100%;
+  max-height: 100%;
+  display: none;
+}
+
+.placeholder {
+  text-align: center;
+  color: #adb5bd;
+}
+
+.placeholder .icon {
+  font-size: 40px;
+  display: block;
+  margin-bottom: 10px;
+}
+
+.action-buttons {
+  text-align: center;
+  margin: 25px 0;
+}
+
+.primary-btn {
+  background: #4263eb;
+  color: white;
+  border: none;
+  padding: 12px 25px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 16px;
+  transition: all 0.3s;
+  display: inline-flex;
+  align-items: center;
+}
+
+.primary-btn:hover {
+  background: #364fc7;
+}
+
+.primary-btn:disabled {
+  background: #adb5bd;
+  cursor: not-allowed;
+}
+
+.secondary-btn {
+  background: #f8f9fa;
+  color: #495057;
+  border: 1px solid #dee2e6;
+  padding: 12px 25px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 16px;
+  transition: all 0.3s;
+  display: inline-flex;
+  align-items: center;
+}
+
+.secondary-btn:hover {
+  background: #e9ecef;
+}
+
+.btn-icon {
+  margin: 0 5px;
+}
+
+.result-box {
+  background: #f8f9fa;
+  border-radius: 10px;
+  padding: 20px;
+  margin: 30px 0;
+  display: none;
+}
+
+.result-title {
+  margin-top: 0;
+  color: #333;
+  font-size: 18px;
+  border-bottom: 1px solid #dee2e6;
+  padding-bottom: 10px;
+}
+
+.result-item {
+  display: flex;
+  justify-content: space-between;
+  margin: 15px 0;
+}
+
+.result-label {
+  font-weight: 600;
+  color: #495057;
+}
+
+.result-value {
+  color: #333;
+}
+
+.step-navigation {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 30px;
+}
+
+/* برای حالت‌های مختلف نتیجه */
+.match {
+  color: #2b8a3e;
+}
+
+.no-match {
+  color: #c92a2a;
+}
+
+/* ///// */
+
+
+
+
+    /* دکمه باز کردن تنظیمات */
+.settings-toggle-btn {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  z-index: 999;
+  padding: 10px 16px;
+  font-size: 16px;
+  background-color: #3b82f6;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  box-shadow: 0 0 6px rgba(0,0,0,0.1);
+}
+
+/* منوی کشویی تنظیمات */
+.settings-drawer {
+  position: fixed;
+  top: 0;
+  right: -300px;
+  width: 280px;
+  height: 100%;
+  background-color: #f9fafb;
+  box-shadow: -4px 0 12px rgba(0, 0, 0, 0.1);
+  padding: 20px;
+  z-index: 998;
+  transition: right 0.3s ease;
+  overflow-y: auto;
+  border-top-left-radius: 12px;
+  border-bottom-left-radius: 12px;
+}
+
+.settings-drawer.open {
+  right: 0;
+}
+
+.settings-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.settings-header h3 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.settings-header button {
+  background: transparent;
+  border: none;
+  font-size: 20px;
+  cursor: pointer;
+}
+
+.checkbox-group label,
+.slider-group label {
+  display: block;
+  margin-bottom: 1px;
+  font-size: 14px;
+  color: #374151;
+}
+ 
+
+.avatar-preview {
+  margin-top: 20px;
+  text-align: center;
+}
+
+.avatar-preview img {
+  width: 70px;
+  height: 70px;
+  object-fit: cover;
+  border-radius: 50%;
+  border: 2px solid #cbd5e1;
+}
+body {
+      font-family: "Vazirmatn", sans-serif;
+      background: #f4f6fa;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+}
+header {
+      width: 100%;
+      background: #2563eb;
+      color: white;
+      text-align: center;
+      padding: 20px;
+      font-size: 22px;
+}
+.container {
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.1);
+      padding: 24px;
+      width: 100%;
+      max-width: 600px;
+      text-align: center;
+}
+.step-indicator {
+      display: flex;
+      justify-content: center;
+      gap: 20px;
+      margin-top: 20px;
+}
+.step-indicator div {
+      background: #d1d5db;
+      color: black;
+      padding: 8px 18px;
+      border-radius: 30px;
+      font-weight: bold;
+}
+.step-indicator .active {
+      background: #3b82f6;
+      color: white;
+    }
+#mainContainer {
+      background-color: white;
+      border-radius: 20px;
+      padding: 40px;
+      box-shadow: 0 0 20px rgba(0,0,0,0.1);
+      width: 90%;
+      max-width: 1000px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+}
+/* 
+    #logoBox img {
+      width: 120px;
+      margin-bottom: 20px;
+    } */
+
+#contentBox {
+    width: 100%;
+}
+
+#mainBox {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin-top: 40px;
+      gap: 40px;
+}
+.tab-buttons {
+      display: flex;
+      gap: 10px;
+      margin-top: 1px;
+}
+.tab-buttons button {
+      padding: 10px 18px;
+      background: #a3a3aa;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: bold;
+}
+.tab-buttons button.active {
+      background: #3b82f6;
+      color: white;
+}
+.tab-content {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 15px;
+}
+.tab-content.active {
+      display: flex;
+}
+.preview-box {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 30px;
+}
+.preview-boxzh {
+      display: none;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 30px;
+}
+.logo-box {
+  width: 80px;
+  height: 80px;
+  background-color: #fff;
+  border-radius: 50%; /* برای دایره‌ای شدن */
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  overflow: hidden; /* اگه لوگو بزرگ بود از باکس بیرون نزنه */
+  margin-bottom: 20px;
+}
+
+.logo-box img {
+  width: 60%;
+  height: auto;
+}
+video, img {
+      border-radius: 50%;
+      border: 4px solid #ccc;
+      width: 300px;
+      height: 300px;
+      object-fit: cover;
+    }
+    button {
+      padding: 12px 24px;
+      background: #3b82f6;
+      color: white;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 16px;
+    }
+    button:hover {
+      background: #2563eb;
+    }
+    #outputMsg {
+      margin-top: 15px;
+      padding: 12px 20px;
+      background: #e5e7eb;
+      border-radius: 10px;
+      font-weight: bold;
+    }
+    #outputMsg.success { background: #d1fae5; color: #065f46; }
+    #outputMsg.error { background: #fee2e2; color: #991b1b; }
+    .step-btn {
+      margin-top: 2px;
+    }
+    #videoProgressBar {
+      width: 80%;
+      height: 10px;
+      background-color: #ddd;
+      border-radius: 5px;
+      overflow: hidden;
+    }
+    
+    #videoProgress {
+      height: 100%;
+      width: 0;
+      background-color: #3b82f6;
+    }
+    .settings-container {
+  margin-top: 2px;
+  background-color: #f9fafb;
+  padding: 20px;
+  border-radius: 16px;
+  width: 100%;
+  box-shadow: 0 0 8px rgba(0,0,0,0.08);
+  text-align: right;
+}
+
+.settings-container h3 {
+  margin-bottom: 1px;
+  color: #1f2937;
+}
+
+ 
+
+.slider-group {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 1px;
+}
+
+.slider-group label {
+  font-size: 14px;
+  color: #4b5563;
+  margin-bottom: 0.5px;
+}
+
+input[type=range] {
+  width: 100%;
+  margin-bottom: 0.5px;
+}
+
+.avatar-preview {
+  margin-top: 10px;
+  text-align: center;
+}
+
+.avatar-preview img {
+  width: 80px;
+  height: 80px;
+  object-fit: cover;
+  border-radius: 50%;
+  border: 3px solid #cbd5e1;
+}
+
+</style>
+</head>
+<body>
+  
+  <div id="mainContainer">
+    <div class="logo-box">
+      
+      <!-- <img src="./myidl.jpeg" alt="لوگو" /> -->
+      <img src="{{ url_for('static', filename='myidl.jpeg') }}" alt="لوگو" />
+    </div> 
+    
+    <div id="contentBox">
+      <header>MYID+ سیستم پردازش چهره  </header>
+  <div class="step-indicator">
+      <div class="active">مرحله ۱: ثبت چهره</div>
+      <div>مرحله ۲: تطبیق چهره</div>
+      <div>مرحله ۳: حقیقی بودن چهره</div>
+      <div>مرحله 4:اطلاعات کارت شناسایی</div>
+      <div>مرحله 5: تأیید نهایی</div>
+    </div>
+  </div>
+<!-- دکمه باز کردن منوی تنظیمات -->
+<button onclick="toggleSettings()" class="settings-toggle-btn">⚙️ تنظیمات</button>
+
+<!-- پنل اسلایدی تنظیمات -->
+<div id="settingsDrawer" class="settings-drawer">
+  <div class="settings-header">
+    <h3>تنظیمات پردازش</h3>
+    <button onclick="toggleSettings()">✖</button>
+  </div>
+  <div class="avatar-preview"> 
+    <img id="userAvatar" src="{{ url_for('static', filename='myidl.jpeg') }}" alt="آواتار کاربر"   />
+    <br>
+    <br>
+    <br>
+  
+  </div>
+
+  <div id="settingsMenu">
+    <h3>ماژول‌ها</h3>
+    <label><input type="checkbox" id="check_anycoverface" checked="true"> بررسی کاور صورت(ماسک، عینک، دست، ..)</label><br>
+    <label><input type="checkbox" id="check_background" checked="true"> بررسی بک‌گراند</label><br>
+    <label><input type="checkbox" id="check_eye" checked="true">  بررسی زاویه چشم </label><br>
+    <label><input type="checkbox" id="check_head" checked="true">بررسی زاویه مستقیم سر</label><br>
+    <label><input type="checkbox" id="check_blurry" checked="true">  بررسی مات بودن تصویر  </label><br>
+    <label><input type="checkbox" id="check_brightness" checked="true">  بررسی روشنایی تصویر</label><br>
+    <label><input type="checkbox" id="check_brightness_face" checked="true">  بررسی روشنایی صورت</label><br>
+    <label><input type="checkbox" id="check_mouth" disabled="true">  بررسی وضعیت دهان </label><br>
+    <br>
+    
+</div>
+
+  <div class="slider-group">
+    <label>آستانه شباهت چهره: <span id="valFaceMatch">0.8</span></label>
+    <input type="range" min="0.5" max="1" step="0.01" value="0.8" id="faceMatchThreshold" oninput="valFaceMatch.innerText = this.value">
+    <label>آستانه لایونس: <span id="valLiveness">0.7</span></label>
+    <input type="range" min="0.3" max="1" step="0.01" value="0.7" id="livenessThreshold" oninput="valLiveness.innerText = this.value">
+    <button onclick="applySettings()">اعمال تغییرات</button>
+  </div>
+
+  
+</div>
+  <div id="mainBox"> 
+    <div class="tab-buttons">
+      <button class="active" onclick="showTab('camera')">دوربین</button>
+      <button onclick="showTab('image')">تصویر</button>
+      <button onclick="showTab('video')">ویدیو</button>
+    </div>
+
+    <div id="camera" class="tab-content active">
+      <button onclick="startCamera()">📷 روشن کردن دوربین</button>
+      <button onclick="stopCamera()">🛑 ارسال تصویر</button>
+    </div>
+
+    <div id="image" class="tab-content">
+      <input type="file" id="uploadImage" accept="image/*" " />
+      <button onclick="uploadFromFile0()">🎞 ارسال تصویر </button>
+    </div>
+    <div id="video" class="tab-content">
+      <input type="file" id="videoUploader" accept="video/*" required/>
+      <button onclick="uploadVideo()">🎞 ارسال ویدیو</button>
+      <div id="videoProgressBar"><div id="videoProgress"></div></div>
+
+    </div>
+
+    <div class="preview-box">
+      <video id="videoFeed" autoplay></video>
+      <img id="capturedFrame"/>
+      <!-- <img id="processedFrame" /> -->
+    </div>
+ 
+    
+
+    <div id="outputMsg"></div>
+     
+    <button onclick="saveVideo()">🎞  دخیره ویدیو در دیتابیس</button>
+    
+
+    <button onclick="goToNextStep()" class="primary-btn">
+      مرحله بعد
+      <span class="btn-icon">→</span>
+    </button>
+
+
+
+    
+  </div>
+</div>
+</div>
+
+<script>
+    let stream = null;
+    let video = document.getElementById("videoFeed");
+    //let processedFrame = document.getElementById("processedFrame");
+    let capturedFrame = document.getElementById("capturedFrame");
+    let intervalId = null;
+    let lastValidFrame = null;
+    let capturing = false;
+    let animationId = null;
+    let file=null;
+
+function showTab(tab) {
+      document.querySelectorAll('.tab-buttons button').forEach(btn => btn.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(div => div.classList.remove('active'));
+      document.querySelector(`.tab-buttons button[onclick*="${tab}"]`).classList.add('active');
+      document.getElementById(tab).classList.add('active');
+    }
+
+function startCamera() {
+    navigator.mediaDevices.getUserMedia({ video: true })
+    .then(mediaStream => {
+      stream = mediaStream;
+      video.srcObject = mediaStream;
+      video.style.display = "block";
+      capturedFrame.style.display = "none";
+      capturing = true;
+     
+      sendFramesToAPI();
+    })
+    // .catch(err => showMsg("خطا در دسترسی به دوربین", "error"));
+    .catch(err => {
+      console.error("getUserMedia error:", err);
+      showMsg("خطا در دسترسی به دوربین: " + err.message, "error");
+    });
+}
+
+function stopCamera() {
+  if (stream) {
+    stream.getTracks().forEach(track => track.stop());
+    stream = null;
+  }
+
+  if (intervalId) {
+    clearInterval(intervalId);
+    intervalId = null;
+  }
+
+  if (animationId) {
+    cancelAnimationFrame(animationId);
+    animationId = null;
+  }
+
+  // نمایش فریم نهایی
+  if (lastValidFrame) {
+    video.style.display = "none";
+    capturedFrame.style.display = "block";
+    capturedFrame.src = "data:image/jpeg;base64," + lastValidFrame;
+    lastValidFrame = data.frame;
+    saveImageToDB(lastValidFrame);
+  }
+}
+
+
+function sendFramesToAPI() {
+  
+  let canvas = document.createElement("canvas");
+  let ctx = canvas.getContext("2d", { willReadFrequently: true });
+  let latestFrame = null;
+
+  function captureFrames() {
+    if (video.videoWidth && video.videoHeight) {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+
+      try {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob(blob => {
+          latestFrame = blob;
+        }, "image/jpeg");
+      } catch (err) {
+        console.error("Draw error:", err);
+      }
+    }
+
+    // ذخیره کردن animationId برای توقف بعدی
+    animationId = requestAnimationFrame(captureFrames);
+  }
+
+  captureFrames();
+
+  // ذخیره کردن intervalId برای توقف بعدی
+  intervalId = setInterval(() => {
+    if (latestFrame) {
+      let formData = new FormData();
+      formData.append("frame", latestFrame, "frame.jpg");
+
+      fetch("http://localhost:5000/process_imgSetting", {
+        method: "POST",
+        body: formData
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.warning[0] === "Face OK!") {
+          lastValidFrame = latestFrame;
+          showMsg("✅ صورت تأیید شد", "success");
+
+          // // ذخیره کردن فریم فعلی
+          // let reader = new FileReader();
+          // reader.onloadend = () => {
+          //     lastValidFrame = reader.result.split(',')[1]; // فقط بخش base64
+          //     stopCamera(); // فقط وقتی فریم آماده شد
+          // };
+          // reader.readAsDataURL(latestFrame);
+
+
+
+          stopCamera();  // ✅ همین‌جا دوربین رو ببند
+          // video.style.display = "none"; // پنهان کردن ویدیو
+          // capturedFrame.style.display = "block"; // نمایش تصویر نهایی
+
+        } else {
+          showMsgAllMessage(data.warning, "error");
+        }
+      })
+      .catch(err => {
+        console.error("API Error:", err);
+        showMsg("خطای API: " + err.message, "error");
+      });
+    }
+  }, 1000);
+}
+
+function uploadFromFile0() {
+  stopCamera();
+  const input = document.getElementById("uploadImage");
+  const file = input.files[0];
+  if (!file) return;
+
+  video.style.display = "none";
+  capturedFrame.src = URL.createObjectURL(file);
+  capturedFrame.style.display = "block";
+
+  const formData = new FormData();
+  formData.append("frame", file, file.name);
+
+  fetch("http://localhost:5000/process_imgSetting", {
+    method: "POST",
+    body: formData
+  })
+    .then(response => response.json())
+    .then(data => {
+      if (data.warning[0] === "Face OK!") {
+        // ✅ تبدیل فایل ورودی به Base64
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const base64Image = reader.result.split(",")[1]; // فقط بخش base64
+          console.log("base64 آماده برای ذخیره‌سازی", base64Image);
+          showMsg("✅ صورت تأیید شد", "success");
+
+          // ارسال base64 برای ذخیره در دیتابیس
+          saveImageToDB(base64Image);
+        };
+        reader.readAsDataURL(file); // تبدیل فایل به Base64
+      }
+    else {
+          showMsg(data.warning, "error");
+        }
+      })
+    .catch(err => {
+      console.error("خطا در پردازش تصویر:", err);
+    });
+}
+function uploadVideo(){
+  stopCamera();
+
+  const input = document.getElementById("videoUploader");
+  const file = input.files[0];
+  if (!file) return alert("لطفاً یک ویدیو انتخاب کنید!");
+  video.style.display = "none";
+    // نمایش تصویر ورودی 
+  capturedFrame.src = URL.createObjectURL(file);
+  capturedFrame.style.display = "block";
+
+  let formData = new FormData();
+  formData.append("video", file, file.name);
+  // fetch("http://localhost:5000/process_video", {
+  fetch("http://localhost:5000/process_videoMultiJustCheck", {
+  // fetch("http://localhost:5000/process_videoasync", {
+  // fetch("http://localhost:5000/process_videoMultiProcessor", {
+    
+    
+    method: "POST",
+    body: formData
+  })
+  .then(response => response.json())
+  .then(data => {
+        if (data.warning == "Face OK!") {
+            // lastValidFrame = data.frame;
+            showMsg("✅ این تصویر صورت تأیید شد", "success");
+            capturedFrame.style.display = "block";
+            capturedFrame.src = "data:image/jpeg;base64," + data.frame;
+            
+            // ارسال base64 برای ذخیره در دیتابیس
+            const reader = new FileReader();
+            reader.onloadend = () => {
+              const base64Image = reader.result.split(",")[1]; // فقط بخش base64
+              saveImageToDB(base64Image);
+            };
+
+            // process_myvid(file)
+            
+            
+          } else {
+            showMsg("❌ " + "هیچ صورت تایید شده ای، در ویدیو شما یافت نشد !", "error");
+          }
+            // نمایش تصویر ورودی 
+          // capturedFrame.src = URL.createObjectURL(data.frame);
+          
+      
+    
+  })
+  .catch(err => showMsg("خطا در ارسال ویدیو", "error"));
+
+}
+
+// function saveVideo() {
+//    stopCamera();
+// }
+function saveVideo() {
+  stopCamera();
+
+  const input = document.getElementById("videoUploader");
+  const file = input.files[0];
+  const filesh = input.files[0];
+  if (!file) return alert("لطفاً یک ویدیو انتخاب کنید!");
+
+  // video.style.display = "none";
+  // capturedFrame.src = URL.createObjectURL(file);
+  // capturedFrame.style.display = "block";
+  let formData = new FormData();
+  formData.append("video", file, file.name);
+
+  fetch("http://localhost:5000/process_myvideo", {
+    method: "POST",
+    body: formData
+  })
+  .then(response => response.json())
+  .then(data => {
+    showMsg("ویدیو به درستی در دیتا بیس ذخیره شد", "success");
+   
+  })
+  .catch(err => {
+    console.error("❌ خطا در ارسال ویدیو:", err);
+    showMsg("خطا در ارسال ویدیو", "error");
+  });
+}
+
+
+
+function saveImageToDB(base64Image) {
+  fetch("http://localhost:5000/save_to_db2", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ image: base64Image })
+  })
+  .then(response => response.json())
+  .then(data => console.log("پاسخ ذخیره‌سازی:", data))
+  .catch(err => console.error("خطای ذخیره در پایگاه داده", err));
+}
+function process_myvid(file){
+  //  fetch("http://localhost:5000/process_myvideo", {
+  //   method: "POST",
+  //   body:  video
+  // })
+  // .then(response => response.json())
+  // .then(data => console.log("پاسخ ذخیره‌سازی:", data.message))
+  // .catch(err => console.error("خطای ذخیره در پایگاه داده", err));
+  let formData0 = new FormData();
+  formData0.append("video", file);
+  try {
+        const response = fetch("http://localhost:5000/uploadvodtodb", {
+            method: 'POST',
+            body: formData0,
+            // توجه: وقتی از FormData استفاده میکنید، نباید 'Content-Type' را تنظیم کنید،
+            // زیرا مرورگر به طور خودکار آن را با boundary مناسب تنظیم میکند.
+        });
+
+        const result =  response.json();
+        if (response.ok) {
+            console.log('Video uploaded:', result);
+            alert('Video uploaded successfully!');
+        } else {
+            console.error('Error:', result.error);
+            alert('Error: ' + result.error);
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        alert('An error occurred while uploading the video');
+    }
+}
+function showMsg(msg, type) {
+  let box = document.getElementById("outputMsg");
+  box.textContent = msg;
+  box.className = "";
+  box.classList.add(type ? type : "");
+  box.classList.add("outputMsg");
+}
+
+function showMsgAllMessage(messages, type) {
+  let box = document.getElementById("outputMsg");
+  box.innerHTML = ""; // پاک کردن محتوای قبلی
+
+  // اگر فقط یک پیام ساده (string) بود، آن را داخل آرایه می‌گذاریم
+  if (!Array.isArray(messages)) {
+    messages = [messages];
+  }
+
+  // چاپ هر پیام در یک <div>
+  messages.forEach(msg => {
+    const p = document.createElement("div");
+    p.textContent = msg;
+    p.className = type ? type : "";
+    box.appendChild(p);
+  });
+
+  box.classList.add("outputMsg");
+}
+let currentStep = 1;
+const totalSteps = 5; // تعداد کل مراحل
+
+function goToNextStep() {
+  if (currentStep >= totalSteps) {
+    alert("این آخرین مرحله است!");
+    return;
+  }
+
+  // غیرفعال کردن مرحله فعلی
+  document.querySelector(`.step-indicator div:nth-child(${currentStep})`).classList.remove('active');
+  
+  // افزایش شماره مرحله
+  currentStep++;
+  
+  // فعال کردن مرحله جدید
+  document.querySelector(`.step-indicator div:nth-child(${currentStep})`).classList.add('active');
+  
+  // تغییر محتوای mainBox بر اساس مرحله فعلی
+  updateMainBoxContent();
+  
+  // اگر به آخرین مرحله رسیدیم، متن دکمه را تغییر دهیم
+  if (currentStep === totalSteps) {
+    document.querySelector('.step-btn button').textContent = 'اتمام ✅';
+  }
+}
+
+function updateMainBoxContent() {
+  const mainBox = document.getElementById('mainBox');
+  
+  switch(currentStep) {
+    case 1:
+      // مرحله ۱: ثبت چهره
+      mainBox.innerHTML = `
+      </div>
+      <div id="mainBox"> 
+        <div class="tab-buttons">
+          <button class="active" onclick="showTab('camera')">دوربین</button>
+          <button onclick="showTab('image')">تصویر</button>
+          <button onclick="showTab('video')">ویدیو</button>
+        </div>
+
+        <div id="camera" class="tab-content active">
+          <button onclick="startCamera()">📷 روشن کردن دوربین</button>
+          <button onclick="stopCamera()">🛑 ارسال تصویر</button>
+        </div>
+
+        <div id="image" class="tab-content">
+          <input type="file" id="uploadImage" accept="image/*" " />
+          <button onclick="uploadFromFile0()">🎞 ارسال تصویر </button>
+    
+        </div>
+
+        <div id="video" class="tab-content">
+          <input type="file" id="videoUploader" accept="video/*" />
+          <button onclick="uploadVideo()">🎞 ارسال ویدیو</button>
+          <div id="videoProgressBar"><div id="videoProgress"></div></div>
+        </div>
+
+        <div class="preview-box">
+          <video id="videoFeed" autoplay></video>
+          <img id="capturedFrame"/>
+          <!-- <img id="processedFrame" /> -->
+        </div>
+
+        <div id="outputMsg"></div>
+        
+        <div id="videosave" class="tab-content">
+          <button onclick="saveVideo()">🎞  دخیره ویدیو در دیتابیس</button>
+        </div>
+
+        <button onclick="goToNextStep()" class="primary-btn">
+          مرحله بعد
+          <span class="btn-icon">→</span>
+        </button>
+      </div>
+      `;
+      break;
+      
+    case 2:
+      // مرحله ۲: تطبیق چهره
+      mainBox.innerHTML = `<div class="face-match-container">
+  <div class="upload-row">
+    <div class="image-upload-box">
+      <div class="upload-header">
+        <h4>تصویر اول </h4>
+        <label for="firstImage" class="upload-btn">انتخاب تصویر</label>
+        <input type="file" id="firstImage" accept="image/*" onchange="previewFirstImage(event)" hidden />
+      </div>
+      <div class="preview-container">
+        <img id="firstPreview" class="preview-image" />
+        <div class="placeholder" id="firstPlaceholder">
+          <i class="icon">📷</i>
+          <p>تصویری انتخاب نشده</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="image-upload-box">
+      <div class="upload-header">
+        <h4>تصویر دوم </h4>
+        <label for="secondImage" class="upload-btn">انتخاب تصویر</label>
+        <input type="file" id="secondImage" accept="image/*" onchange="previewSecondImage(event)" hidden />
+      </div>
+      <div class="preview-container">
+        <img id="secondPreview" class="preview-image" />
+        <div class="placeholder" id="secondPlaceholder">
+          <i class="icon">📷</i>
+          <p>تصویری انتخاب نشده</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="action-buttons">
+    <button id="compareFacesBtn" class="primary-btn" onclick="compareFaces()" disabled>
+      <span class="btn-icon">🔍</span>
+      مقایسه چهره‌ها
+    </button>
+  </div>
+
+  <div id="matchResult" class="result-box">
+    <h4 class="result-title">نتیجه مقایسه:</h4>
+    <div class="result-item">
+      <span class="result-label">میزان شباهت:</span>
+      <span id="similarityScore" class="result-value">--</span>
+    </div>
+    <div class="result-item">
+      <span class="result-label">نتیجه:</span>
+      <span id="verificationResult" class="result-value">--</span>
+    </div>
+  </div>
+
+  <div class="step-navigation">
+    <button onclick="goToPrevStep()" class="secondary-btn">
+      <span class="btn-icon">←</span>
+      مرحله قبل
+    </button>
+    <button onclick="goToNextStep()" class="primary-btn">
+      مرحله بعد
+      <span class="btn-icon">→</span>
+    </button>
+  </div>
+</div>
+      `;
+      break;
+      
+    case 3:
+      // مرحله ۳: بررسی حقیقی بودن چهره
+      mainBox.innerHTML = `
+        <h3>در حال بررسی لایونس (حقیقی بودن) چهره...</h3>
+        <div class="liveness-result">
+          <!-- نتایج لایونس -->
+        </div>
+        <div class="step-btn">
+          <button onclick="goToNextStep()">مرحله بعد >> </button>
+        </div>
+         <div class="step-btn">
+          <button onclick="goToPrevStep()"> << مرحله قبل  </button>
+        </div>
+      `;
+      break;
+      
+    case 4:
+      // مرحله ۴: استخراج اطلاعات کارت شناسایی
+      mainBox.innerHTML = `
+        <h3>لطفاً کارت شناسایی خود را مقابل دوربین بگیرید</h3>
+        <div class="id-card-scan">
+          <!-- اسکنر کارت شناسایی -->
+        </div>
+        <div class="step-navigation">
+    <button onclick="goToPrevStep()" class="secondary-btn">
+      <span class="btn-icon">←</span>
+      مرحله قبل
+    </button>
+    <button onclick="goToNextStep()" class="primary-btn">
+      مرحله بعد
+      <span class="btn-icon">→</span>
+    </button>
+  </div>
+      `;
+      break;
+      
+    case 5:
+      // مرحله ۵: تأیید نهایی
+      mainBox.innerHTML = `
+        <h3>تأیید نهایی اطلاعات</h3>
+        <div class="final-confirmation">
+          <!-- اطلاعات جمع‌بندی شده -->
+          <button onclick="submitFinal()">تأیید و ارسال</button>
+        </div>
+        <div class="step-navigation">
+    <button onclick="goToPrevStep()" class="secondary-btn">
+      <span class="btn-icon">←</span>
+      مرحله قبل
+    </button> 
+  </div>
+      `;
+      break;
+  }
+}
+
+let fFile = null;
+let sFile = null;
+function previewFirstImage(event) {
+  const file = event.target.files[0];
+  fFile=file
+  const preview = document.getElementById('firstPreview');
+  const placeholder = document.getElementById('firstPlaceholder');
+  
+  if (file) {
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      firstImage = e.target.result;
+      preview.src = firstImage;
+      preview.style.display = 'block';
+      placeholder.style.display = 'none';
+      checkCompareButton();
+    };
+    reader.readAsDataURL(file);
+  }
+}
+
+function previewSecondImage(event) {
+  const file = event.target.files[0];
+  sFile = file;
+  const preview = document.getElementById('secondPreview');
+  const placeholder = document.getElementById('secondPlaceholder');
+  
+  if (file) {
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      secondImage = e.target.result;
+      preview.src = secondImage;
+      preview.style.display = 'block';
+      placeholder.style.display = 'none';
+      checkCompareButton();
+    };
+    reader.readAsDataURL(file);
+  }
+}
+function checkCompareButton() {
+  const btn = document.getElementById('compareFacesBtn');
+  btn.disabled = !(firstImage && secondImage);
+}
+
+ 
+async function compareFaces() {
+  const btn = document.getElementById('compareFacesBtn');
+  const resultBox = document.getElementById('matchResult');
+  
+  btn.innerHTML = '<span class="btn-icon">⏳</span> در حال پردازش...';
+  
+  try {
+    // بررسی وجود فایل‌ها
+    if (!fFile || !sFile) {
+      throw new Error("لطفاً هر دو تصویر را انتخاب کنید");
+    }
+
+    const formData = new FormData();
+    formData.append("file1", fFile, "image1.jpg");
+    formData.append("file2", sFile, "image2.jpg");
+    
+ 
+    console.log("شروع پردازش...");
+    console.log("فایل 1:", fFile);
+    console.log("فایل 2:", sFile);
+    
+    // استفاده از await برای انتظار دریافت پاسخ
+    const response = await fetch("http://176.126.120.73:8000/compare", {
+
+      method: "POST",
+      body: formData,
+      mode: 'cors', // این خط را اضافه کنید
+      headers: {
+        'Accept': 'application/json',
+      }
+    });
+    // console.log("پاسخ دریافت شد:", response);
+
+    
+    if (!response.ok) {
+      const errorData = await response.json();
+      // console.error("جزئیات خطا:", errorData);
+      throw new Error(errorData.detail || "خطا در پردازش");
+    }
+    
+    const data = await response.json();
+    // console.log("داده‌های پردازش شده:", data);
+    const similarityPercent = parseFloat(data.similarity_percent);
+    
+    // console.log("پاسخ API:", data); // برای دیباگ
+    alert("میزان تشابه: " + similarityPercent + "%");
+    
+    document.getElementById('similarityScore').textContent = `${similarityPercent}%`;
+    
+    const threshold = parseFloat(document.getElementById('faceMatchThreshold').value);
+    alert("آستانه:"+ (threshold*100)); // برای دیباگ
+    const isMatch = similarityPercent >= (threshold * 100);
+    
+    const resultElement = document.getElementById('verificationResult');
+    resultElement.textContent = isMatch ? 'تطابق دارد' : 'تطابق ندارد';
+    resultElement.className = isMatch ? 'match' : 'no-match';
+    
+    resultBox.style.display = 'block';
+    
+  } catch (error) {
+    // console.error("جزئیات خطا:", error);
+    alert(`خطا: ${error.message}`) 
+  } finally {
+    btn.innerHTML = '<span class="btn-icon">🔍</span> مقایسه چهره‌ها';
+  }
+}
+function goToPrevStep() {
+      if (currentStep <= 1) return;
+      
+      document.querySelector(`.step-indicator div:nth-child(${currentStep})`).classList.remove('active');
+      currentStep--;
+      document.querySelector(`.step-indicator div:nth-child(${currentStep})`).classList.add('active');
+      updateMainBoxContent();
+      
+      // تغییر متن دکمه به حالت عادی اگر از مرحله آخر برگشتیم
+      document.querySelector('.step-btn button').textContent = 'مرحله بعد ⏭';
+}
+    
+function toggleSettings() {
+  const drawer = document.getElementById("settingsDrawer");
+  drawer.classList.toggle("open");
+}
+function applySettings() { 
+  // const settings = {
+  //   CHECK_EYE: document.getElementById('check_eye').checked,
+  //   CHECK_BACKGROUND: document.getElementById('check_background').checked,
+  //           CHECK_HEAD: document.getElementById('check_head').checked,
+  //           CHECK_BRIGHTNESS: document.getElementById('check_brightness').checked,
+  //           CHECK_BRIGHTNESS_FACE: document.getElementById('check_brightness_face').checked,
+  //           CHECK_MOUTH: document.getElementById('check_mouth').checked,
+  //           CHECK_BLURRY: document.getElementById('check_blurry').checked,
+  //           CHECK_FACECOVER: document.getElementById('check_anycoverface').checked
+  
+            
+
+  //       }; 
+        const settings = {
+            check_eye: document.getElementById('check_eye').checked,
+            check_background: document.getElementById('check_background').checked,
+            check_head: document.getElementById('check_head').checked,
+            check_brightness: document.getElementById('check_brightness').checked,
+            check_brightness_face: document.getElementById('check_brightness_face').checked,
+            check_mouth: document.getElementById('check_mouth').checked,
+            check_blurry: document.getElementById('check_blurry').checked,
+            check_anycoverface: document.getElementById('check_anycoverface').checked
+            
+
+        };
+
+        fetch('http://localhost:5000/set_settings', {
+        // fetch('http://localhost:5000/update_settings', {
+          
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(settings)
+        })
+        .then(response => response.json())
+        .then(data => {
+            alert('تنظیمات اعمال شد ✅');
+            // settingsMenu.style.display = 'none';
+        })
+        .catch(err => {
+            alert('خطا در ارسال تنظیمات ❌');
+        });
+    }
+
+
+  
+  </script>
+</body>
+</html>

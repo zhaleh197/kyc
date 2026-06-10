@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>سیستم پردازش چهره - مرحله به مرحله</title>
+    <style>
+        :root{
+            --bg:#f6f7fb; --card:#fff; --accent:#2b6ef6; --muted:#6b7280;
+            --success:#16a34a; --danger:#ef4444; --radius:10px; --max-w:1100px;
+        }
+        *{box-sizing:border-box;font-family: "Tahoma","Vazir", Arial, sans-serif}
+        body{margin:0;background:var(--bg);color:#111;display:flex;justify-content:center;padding:20px}
+        .app{width:100%;max-width:var(--max-w)}
+        header{display:flex;gap:12px;align-items:center;margin-bottom:18px}
+        header img{height:46px;border-radius:8px}
+        h1{margin:0;font-size:18px}
+        .card{background:var(--card);border-radius:var(--radius);box-shadow:0 8px 24px rgba(20,20,40,.06);padding:16px}
+        .wizard{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+        .wizard .step{padding:8px 12px;border-radius:999px;background:#eef2ff;color:#0f172a;font-weight:600;font-size:13px;cursor:pointer}
+        .wizard .step.active{background:var(--accent);color:#fff}
+        .layout{display:grid;grid-template-columns:1fr 360px;gap:16px}
+        @media (max-width:960px){.layout{grid-template-columns:1fr}}
+        .preview{background:#111;border-radius:8px;min-height:360px;position:relative;overflow:hidden}
+        video,img{width:100%;height:100%;object-fit:cover;display:block}
+        .controls{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+        button{background:var(--accent);color:#fff;border:0;padding:8px 12px;border-radius:8px;cursor:pointer}
+        .btn-ghost{background:#fff;color:var(--accent);border:1px solid #e6eefb}
+        .muted{color:var(--muted);font-size:13px}
+        .panel{background:var(--card);border-radius:10px;padding:12px}
+        .status{margin-top:8px;font-size:13px}
+        input[type=file]{display:none}
+        .thumb{width:72px;height:72px;border-radius:6px;object-fit:cover;border:1px solid #e6eefb}
+        .footer{display:flex;justify-content:space-between;align-items:center;margin-top:12px;font-size:13px;color:var(--muted)}
+        .drawer-overlay{position:fixed;inset:0;background:rgba(2,6,23,0.45);display:none;z-index:40}
+        .drawer{position:fixed;top:0;right:-420px;width:380px;height:100%;background:var(--card);box-shadow:-12px 0 30px rgba(10,10,30,.12);z-index:50;padding:16px;transition:right .28s}
+        .drawer.open{right:0}
+        .drawer header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+        .nav-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
+        .hidden{display:none}
+        .validation{font-size:13px;color:var(--danger);margin-top:8px}
+        .ok{color:var(--success)}
+    </style>
+</head>
+<body>
+<div class="app">
+    <header>
+        <img src="/static/myidl.jpeg" alt="logo">
+        <div>
+            <h1>سیستم پردازش چهره — مرحله به مرحله</h1>
+            <div class="muted">مسیر: تشخیص → تطبیق → لایونس → کارت → تأیید</div>
+        </div>
+    </header>
+
+    <div class="card">
+        <div class="wizard" id="wizard">
+            <div class="step active" data-step="1">۱. تشخیص چهره</div>
+            <div class="step" data-step="2">۲. تطبیق</div>
+            <div class="step" data-step="3">۳. لایونس</div>
+            <div class="step" data-step="4">۴. کارت شناسایی</div>
+            <div class="step" data-step="5">۵. تأیید نهایی</div>
+        </div>
+
+        <div class="layout">
+            <!-- main preview + controls -->
+            <main>
+                <div class="panel">
+                    <div class="preview" id="preview">
+                        <video id="previewVideo" autoplay playsinline muted class="hidden"></video>
+                        <img id="previewImage" alt="پیش‌نمایش" class="hidden" />
+                        <div id="overlayInfo" style="position:absolute;left:12px;top:12px;color:#fff;font-weight:600"></div>
+                    </div>
+
+                    <div class="controls" id="controlsRow">
+                        <button id="startCamera">شروع دوربین</button>
+                        <button id="stopCamera" class="btn-ghost">توقف</button>
+                        <button id="capture" class="btn-ghost">عکس بگیر</button>
+
+                        <label class="btn-ghost" style="cursor:pointer;padding:8px 12px;border-radius:8px">
+                            بارگذاری تصویر
+                            <input id="imageFile" type="file" accept="image/*">
+                        </label>
+
+                        <label class="btn-ghost" style="cursor:pointer;padding:8px 12px;border-radius:8px">
+                            بارگذاری ویدیو
+                            <input id="videoFile" type="file" accept="video/*">
+                        </label>
+                    </div>
+
+                    <div id="stepMessage" class="status muted" style="margin-top:8px">در قدم اول، ابتدا چهره را ثبت کنید.</div>
+
+                    <div class="nav-actions" style="margin-top:10px">
+                        <button id="backBtn" class="btn-ghost hidden">بازگشت</button>
+                        <button id="nextBtn">به مرحله بعد</button>
+                    </div>
+                </div>
+            </main>
+
+            <!-- right panel: tools, compare, settings -->
+            <aside>
+                <div class="panel">
+                    <h3 style="margin:0 0 8px">ابزار</h3>
+
+                    <div id="faceDetectionStatus" class="status">وضعیت تشخیص: <span id="faceStatus" class="muted">نامشخص</span></div>
+
+                    <hr style="margin:10px 0">
+
+                    <div id="matchingPanel">
+                        <div style="display:flex;gap:8px;align-items:center">
+                            <img id="compareThumbA" class="thumb" src="/static/placeholder.png" alt="A">
+                            <div style="flex:1">
+                                <label class="btn-ghost" style="display:block;text-align:center;cursor:pointer">
+                                    تصویر A
+                                    <input id="compareA" type="file" accept="image/*">
+                                </label>
+                            </div>
+                        </div>
+
+                        <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+                            <img id="compareThumbB" class="thumb" src="/static/placeholder.png" alt="B">
+                            <div style="flex:1">
+                                <label class="btn-ghost" style="display:block;text-align:center;cursor:pointer">
+                                    تصویر B
+                                    <input id="compareB" type="file" accept="image/*">
+                                </label>
+                            </div>
+                        </div>
+
+                        <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+                            <input id="threshold" type="range" min="0" max="1" step="0.01" value="0.6" style="flex:1">
+                            <div id="thresholdLabel" style="width:44px;text-align:center">0.60</div>
+                        </div>
+
+                        <button id="compareBtn" style="width:100%;margin-top:8px">مقایسه تصاویر</button>
+                        <div id="compareResult" class="status" style="min-height:28px;margin-top:6px"></div>
+                    </div>
+
+                    <hr style="margin:10px 0">
+
+                    <button id="openSettings" class="btn-ghost" style="width:100%">⚙️ تنظیمات</button>
+
+                    <div class="footer" style="margin-top:12px">
+                        <div class="muted">حالت: <span id="modeLabel">تشخیص</span></div>
+                        <div class="muted">نسخه: 1.0</div>
+                    </div>
+                </div>
+            </aside>
+        </div>
+    </div>
+</div>
+
+<!-- drawer with overlay (fixed right) -->
+<div id="drawerOverlay" class="drawer-overlay" tabindex="-1"></div>
+<aside id="drawer" class="drawer" aria-hidden="true">
+    <header>
+        <strong>تنظیمات پردازش</strong>
+        <button id="closeDrawer" class="btn-ghost">بستن</button>
+    </header>
+
+    <div style="display:flex;flex-direction:column;gap:10px">
+        <label><input id="optBg" type="checkbox" checked> حذف پس‌زمینه</label>
+        <label><input id="optCover" type="checkbox" checked> تشخیص پوشش صورت</label>
+        <label><input id="optBlur" type="checkbox" checked> تشخیص تاری</label>
+
+        <div style="display:flex;gap:8px;align-items:center">
+            <div style="flex:1">سختی لایونس</div>
+            <input id="liveness" type="range" min="0" max="1" step="0.05" value="0.5" style="flex:1">
+            <div id="livenessLabel" style="width:36px;text-align:center">0.50</div>
+        </div>
+
+        <div style="display:flex;gap:8px">
+            <button id="applySettings" style="flex:1">اعمال</button>
+            <button id="resetSettings" class="btn-ghost" style="flex:1">بازنشانی</button>
+        </div>
+    </div>
+</aside>
+
+<script>
+(() => {
+    const BASE = window.location.origin || 'http://localhost:5000';
+    const endpoints = {
+        processImg: BASE + '/process_imgSetting',
+        processVideoCheck: BASE + '/process_videoMultiJustCheck',
+        compareRemote: 'http://176.126.120.73:8000/compare',
+        setSettings: BASE + '/set_settings'
+    };
+
+    // Elements
+    const steps = Array.from(document.querySelectorAll('.wizard .step'));
+    const previewVideo = document.getElementById('previewVideo');
+    const previewImage = document.getElementById('previewImage');
+    const preview = document.getElementById('preview');
+    const overlayInfo = document.getElementById('overlayInfo');
+    const startCameraBtn = document.getElementById('startCamera');
+    const stopCameraBtn = document.getElementById('stopCamera');
+    const captureBtn = document.getElementById('capture');
+    const imageFile = document.getElementById('imageFile');
+    const videoFile = document.getElementById('videoFile');
+    const nextBtn = document.getElementById('nextBtn');
+    const backBtn = document.getElementById('backBtn');
+    const stepMessage = document.getElementById('stepMessage');
+    const modeLabel = document.getElementById('modeLabel');
+
+    // right panel
+    const compareA = document.getElementById('compareA');
+    const compareB = document.getElementById('compareB');
+    const compareThumbA = document.getElementById('compareThumbA');
+    const compareThumbB = document.getElementById('compareThumbB');
+    const compareBtn = document.getElementById('compareBtn');
+    const compareResult = document.getElementById('compareResult');
+    const threshold = document.getElementById('threshold');
+    const thresholdLabel = document.getElementById('thresholdLabel');
+
+    // drawer
+    const drawer = document.getElementById('drawer');
+    const drawerOverlay = document.getElementById('drawerOverlay');
+    const openSettings = document.getElementById('openSettings');
+    const closeDrawer = document.getElementById('closeDrawer');
+    const applySettings = document.getElementById('applySettings');
+    const resetSettings = document.getElementById('resetSettings');
+    const liveness = document.getElementById('liveness');
+    const livenessLabel = document.getElementById('livenessLabel');
+
+    // state flags (controlled by real backend responses)
+    let state = {
+        step: 1,
+        faceDetected: false,
+        faceMatched: false,
+        livenessPassed: false,
+        idProcessed: false,
+        lastFrameDataUrl: null
+    };
+
+    let stream = null;
+    let sendInterval = null;
+
+    // helper UI
+    function updateWizardUI(){
+        steps.forEach(s => s.classList.toggle('active', Number(s.dataset.step) === state.step));
+        backBtn.classList.toggle('hidden', state.step === 1);
+        modeLabel.textContent = ["","تشخیص","تطبیق","لایونس","کارت","تأیید"][state.step];
+        // message per step
+        const msgs = {
+            1: 'قدم ۱: دوربین را روشن کنید و چهره را ثبت/آپلود کنید.',
+            2: 'قدم ۲: دو تصویر را برای تطبیق انتخاب کنید.',
+            3: 'قدم ۳: لایونس را اجرا کنید (حرکت/چرخش سر).',
+            4: 'قدم ۴: تصویر کارت شناسایی را آپلود کنید.',
+            5: 'قدم ۵: بررسی نهایی و ذخیره.'
+        };
+        stepMessage.textContent = msgs[state.step];
+    }
+
+    // step navigation with validation
+    async function goToStep(target){
+        // validation rules
+        if(target > state.step){
+            // moving forward, require previous checks
+            if(state.step === 1 && !state.faceDetected){ alert('ابتدا تشخیص چهره انجام شود.'); return; }
+            if(state.step === 2 && !state.faceMatched){ alert('ابتدا تطبیق چهره انجام شود.'); return; }
+            if(state.step === 3 && !state.livenessPassed){ alert('ابتدا لایونس را کامل کنید.'); return; }
+            if(state.step === 4 && !state.idProcessed){ alert('ابتدا کارت شناسایی پردازش شود.'); return; }
+        }
+        state.step = target;
+        updateWizardUI();
+    }
+
+    steps.forEach(s => s.addEventListener('click', ()=> goToStep(Number(s.dataset.step)))) ;
+
+    nextBtn.addEventListener('click', ()=> {
+        if(state.step < 5) goToStep(state.step + 1);
+        else alert('پایان فرایند');
+    });
+    backBtn.addEventListener('click', ()=> goToStep(Math.max(1, state.step -1)));
+
+    // camera functions
+    function showVideo(){
+        previewVideo.classList.remove('hidden');
+        previewImage.classList.add('hidden');
+    }
+    function showImage(dataUrl){
+        previewImage.src = dataUrl;
+        previewImage.classList.remove('hidden');
+        previewVideo.classList.add('hidden');
+    }
+
+    async function startCamera(){
+        if(stream) return;
+        try{
+            stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:'user'}, audio:false});
+            previewVideo.srcObject = stream;
+            previewVideo.play();
+            showVideo();
+            overlayInfo.textContent = 'دوربین فعال';
+            // optionally send frames periodically for detection
+            if(sendInterval) clearInterval(sendInterval);
+            sendInterval = setInterval(async ()=> {
+                // simple throttle
+                if(previewVideo.readyState < 2) return;
+                const dataUrl = grabFrame();
+                // optimistic: show local preview frame
+                state.lastFrameDataUrl = dataUrl;
+                // send to backend for detection
+                try{
+                    const res = await sendFrame(dataUrl);
+                    if(res && res.status === 'ok' && res.message && res.message.includes('Face OK')){
+                        state.faceDetected = true;
+                        document.getElementById('faceStatus').textContent = 'چهره شناسایی شد';
+                        document.getElementById('faceStatus').classList.add('ok');
+                        updateWizardUI();
+                    } else {
+                        // keep previous state
+                    }
+                }catch(e){
+                    console.warn('detect err', e);
+                }
+            }, 1500);
+        }catch(e){
+            alert('دسترسی به دوربین ممکن نیست.');
+        }
+    }
+    function stopCamera(){
+        if(sendInterval){ clearInterval(sendInterval); sendInterval = null; }
+        if(stream){ stream.getTracks().forEach(t=>t.stop()); stream = null; }
+        overlayInfo.textContent = '';
+        previewVideo.pause();
+        previewVideo.srcObject = null;
+    }
+    function grabFrame(){
+        const canvas = document.createElement('canvas');
+        canvas.width = previewVideo.videoWidth || 640;
+        canvas.height = previewVideo.videoHeight || 480;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(previewVideo, 0, 0, canvas.width, canvas.height);
+        return canvas.toDataURL('image/jpeg', 0.9);
+    }
+    async function sendFrame(dataUrl){
+        const blob = await (await fetch(dataUrl)).blob();
+        const form = new FormData();
+        form.append('file', blob, 'frame.jpg');
+        const r = await fetch(endpoints.processImg, { method:'POST', body: form });
+        return await r.json();
+    }
+
+    captureBtn.addEventListener('click', ()=> {
+        if(!stream){ alert('ابتدا دوربین را روشن کنید.'); return; }
+        const data = grabFrame();
+        state.lastFrameDataUrl = data;
+        showImage(data);
+        // call detect immediately
+        sendFrame(data).then(res => {
+            if(res && res.status === 'ok' && res.message && res.message.includes('Face OK')){
+                state.faceDetected = true;
+                document.getElementById('faceStatus').textContent = 'چهره شناسایی شد';
+                document.getElementById('faceStatus').classList.add('ok');
+            } else {
+                document.getElementById('faceStatus').textContent = 'چهره شناسایی نشد';
+                document.getElementById('faceStatus').classList.remove('ok');
+            }
+            updateWizardUI();
+        }).catch(()=>{});
+    });
+    startCameraBtn.addEventListener('click', startCamera);
+    stopCameraBtn.addEventListener('click', stopCamera);
+
+    // file inputs for detection
+    imageFile.addEventListener('change', async e=>{
+        const f = e.target.files[0]; if(!f) return;
+        const url = URL.createObjectURL(f);
+        showImage(url);
+        // send to server for detection
+        const form = new FormData(); form.append('file', f);
+        try{
+            const r = await fetch(endpoints.processImg, { method:'POST', body: form });
+            const j = await r.json();
+            if(j && j.status === 'ok' && j.message && j.message.includes('Face OK')){
+                state.faceDetected = true;
+                document.getElementById('faceStatus').textContent = 'چهره شناسایی شد';
+                document.getElementById('faceStatus').classList.add('ok');
+            } else {
+                document.getElementById('faceStatus').textContent = 'چهره شناسایی نشد';
+                document.getElementById('faceStatus').classList.remove('ok');
+            }
+            updateWizardUI();
+        }catch(e){ console.warn(e); }
+    });
+
+    videoFile.addEventListener('change', async e=>{
+        const f = e.target.files[0]; if(!f) return;
+        showImage(URL.createObjectURL(f));
+        // send video to server for frame extraction
+        const form = new FormData(); form.append('file', f);
+        try{
+            const r = await fetch(endpoints.processVideoCheck, { method:'POST', body: form });
+            const j = await r.json();
+            if(j && j.base64_frame){
+                showImage(j.base64_frame);
+                // assume face detected if server returned a valid frame
+                state.faceDetected = true;
+                document.getElementById('faceStatus').textContent = 'چهره شناسایی شد (ویدیو)';
+                document.getElementById('faceStatus').classList.add('ok');
+            } else {
+                document.getElementById('faceStatus').textContent = 'هیچ فریمی معتبر یافت نشد';
+            }
+            updateWizardUI();
+        }catch(e){ console.warn(e); }
+    });
+
+    // matching
+    function fileToDataUrl(file){ return new Promise((res,rej)=>{ const r = new FileReader(); r.onload=()=>res(r.result); r.onerror=rej; r.readAsDataURL(file); }) }
+    compareA.addEventListener('change', async e=>{
+        const f = e.target.files[0]; if(!f) return;
+        compareThumbA.src = await fileToDataUrl(f);
+    });
+    compareB.addEventListener('change', async e=>{
+        const f = e.target.files[0]; if(!f) return;
+        compareThumbB.src = await fileToDataUrl(f);
+    });
+
+    compareBtn.addEventListener('click', async ()=>{
+        const a = compareThumbA.src, b = compareThumbB.src;
+        if(!a || a.includes('placeholder') || !b || b.includes('placeholder')){ alert('هر دو تصویر را انتخاب کنید'); return; }
+        compareResult.textContent = 'در حال ارسال...';
+        try{
+            const blobA = await (await fetch(a)).blob();
+            const blobB = await (await fetch(b)).blob();
+            const form = new FormData(); form.append('image1', blobA, 'a.jpg'); form.append('image2', blobB, 'b.jpg');
+            const res = await fetch(endpoints.compareRemote, { method:'POST', body: form });
+            if(!res.ok){ compareResult.textContent = 'خطا در سرویس مقایسه'; state.faceMatched = false; return; }
+            const j = await res.json();
+            const score = j.similarity ?? j.score ?? null;
+            if(score == null){ compareResult.textContent = 'نتیجه نامشخص'; state.faceMatched = false; return; }
+            const thresh = parseFloat(threshold.value);
+            compareResult.innerHTML = `نمره: <strong>${score}</strong> — ${score >= thresh ? '<span class="ok">تطبیق</span>' : '<span class="muted">عدم تطبیق</span>'}`;
+            state.faceMatched = score >= thresh;
+            updateWizardUI();
+        }catch(e){ console.warn(e); compareResult.textContent = 'خطا'; state.faceMatched = false; }
+    });
+
+    threshold.addEventListener('input', ()=> thresholdLabel.textContent = Number(threshold.value).toFixed(2));
+
+    // liveness (simple client-side simulation; replace with server-backed sequence)
+    function runLivenessSim(){
+        // simple prompt: ask user to turn head or blink; call backend if needed
+        const ok = confirm('لایونس: لطفاً سر را چرخانده و سپس OK بزنید (این فقط شبیه‌سازی است).');
+        if(ok){
+            state.livenessPassed = true;
+            alert('لایونس با موفقیت انجام شد.');
+            updateWizardUI();
+        } else {
+            state.livenessPassed = false;
+        }
+    }
+
+    // id card (upload + call server)
+    async function processIdCard(file){
+        if(!file) return;
+        const form = new FormData(); form.append('file', file);
+        try{
+            const r = await fetch(BASE + '/process_id_card', { method:'POST', body: form });
+            if(!r.ok){ alert('خطا در پردازش کارت'); state.idProcessed = false; return; }
+            const j = await r.json();
+            // assume server indicates success with status 'ok'
+            state.idProcessed = j.status === 'ok';
+            if(state.idProcessed) alert('کارت پردازش شد');
+            else alert('کارت معتبر نیست');
+            updateWizardUI();
+        }catch(e){ console.warn(e); alert('خطا در ارتباط'); state.idProcessed = false; }
+    }
+
+    // drawer controls (overlay fixed right, closable)
+    function openDrawer(){ drawer.classList.add('open'); drawer.setAttribute('aria-hidden','false'); drawerOverlay.style.display='block'; }
+    function closeDrawerFn(){ drawer.classList.remove('open'); drawer.setAttribute('aria-hidden','true'); drawerOverlay.style.display='none'; }
+    openSettings.addEventListener('click', openDrawer);
+    closeDrawer.addEventListener('click', closeDrawerFn);
+    drawerOverlay.addEventListener('click', closeDrawerFn);
+    resetSettings.addEventListener('click', ()=>{ document.getElementById('optBg').checked=true; document.getElementById('optCover').checked=true; document.getElementById('optBlur').checked=true; liveness.value=0.5; livenessLabel.textContent='0.50'; });
+    applySettings.addEventListener('click', async ()=>{
+        const payload = { enable_background: document.getElementById('optBg').checked, enable_cover: document.getElementById('optCover').checked, enable_blur: document.getElementById('optBlur').checked, liveness_threshold: parseFloat(liveness.value) };
+        try{ await fetch(endpoints.setSettings, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) }); alert('تنظیمات ذخیره شد'); closeDrawerFn(); }catch(e){ alert('خطا در ذخیره تنظیمات'); }
+    });
+    liveness.addEventListener('input', ()=> livenessLabel.textContent = Number(liveness.value).toFixed(2));
+
+    // initial UI
+    updateWizardUI();
+
+    // step-specific hooks: enable step actions
+    // when entering step 2 (matching), if no faceDetected warn
+    steps.forEach(s => s.addEventListener('click', ()=> {
+        const t = Number(s.dataset.step);
+        if(t===2 && !state.faceDetected){ alert('ابتدا چهره شناسایی شود (قدم ۱).'); }
+    }));
+
+    // example bindings to trigger liveness and id processing on their steps
+    // run liveness when user opens step 3
+    const observer = new MutationObserver(()=> {
+        if(state.step === 3 && !state.livenessPassed){
+            // ask to run liveness
+            setTimeout(()=> {
+                if(!state.livenessPassed) runLivenessSim();
+            }, 300);
+        }
+    });
+    observer.observe(document.getElementById('wizard'), { attributes: false, childList: false, subtree: false });
+
+    // when user reaches step 4 allow file upload for ID via a dynamic input
+    // create and attach input for id card when step 4 active
+    let idInput = null;
+    steps.forEach(s => s.addEventListener('click', ()=> {
+        if(Number(s.dataset.step)===4){
+            if(!idInput){
+                idInput = document.createElement('input');
+                idInput.type = 'file';
+                idInput.accept = 'image/*';
+                idInput.style.display = 'none';
+                document.body.appendChild(idInput);
+                idInput.addEventListener('change', ()=> processIdCard(idInput.files[0]));
+                // insert a small action to prompt user
+                const p = document.createElement('p');
+                p.innerHTML = '<button class="btn-ghost" id="uploadIdBtn">آپلود کارت شناسایی</button>';
+                document.querySelector('main .panel').appendChild(p);
+                document.getElementById('uploadIdBtn').addEventListener('click', ()=> idInput.click());
+            }
+        }
+    }));
+
+    // clean unload
+    window.addEventListener('beforeunload', ()=> { if(stream) stopCamera(); });
+})();
+</script>
+</body>
+</html>
