@@ -1,0 +1,23 @@
+#version: '3.9'
+
+services:
+  facematching:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: myfacematchapp:latest
+    container_name: my_facematching_container
+    ports:
+      - "9000:9000" 
+    volumes:
+      - .:/app
+      - insightface_models:/root/.insightface/models  
+    restart: always
+    networks:
+      - myapp_network
+
+networks:
+  myapp_network:
+
+volumes:
+  insightface_models:   
