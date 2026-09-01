@@ -205,3 +205,29 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# ---- KYC project ----
+# Model weights are pulled from the model store, never committed.
+models/**
+!models/README.md
+!models/manifest.yaml
+*.onnx
+*.pt
+*.pth
+*.caffemodel
+*.whl
+*.index
+
+# Local scratch / uploads
+.scratch/
+uploads/
+outputs/
+segmented_crops*/
+
+# Local dataset staging (roboflow_pull / prepare_dataset output)
+.data/
+.kaggle_run.json
+
+# Ultralytics training output
+runs/
+yolov8*.pt

@@ -1,0 +1,51 @@
+# Provenance for every model artifact in this directory.
+#
+# A KYC model that nobody can retrace is a model nobody can defend after an
+# incident. Record the dataset snapshot, the training command and the
+# validation metric for each export, and keep the sha256 so a deployed file can
+# be matched back to this record.
+#
+# Fill this in as artifacts are produced; `python -m scripts.check_models`
+# prints the sha256 of whatever is currently on disk.
+
+artifacts:
+  - name: ir_national_card_front_fields.onnx
+    module: ocr
+    profile: ir_national_card_front
+    task: field detection on the rectified card
+    trained_by: training/kaggle/train_field_detector.py
+    base_weights: yolov8n.pt
+    dataset: TODO            # kaggle dataset slug + version
+    commit: TODO             # repo commit the training script was run from
+    command: TODO
+    metrics:
+      map50: TODO
+      map50_95: TODO
+    sha256: TODO
+    exported_at: TODO
+
+  - name: crnn_fa_text.onnx
+    module: ocr
+    task: Persian text line recognition (names)
+    trained_by: training/kaggle/train_crnn.py
+    dataset: TODO
+    commit: TODO
+    command: TODO
+    metrics:
+      exact_match: TODO
+      normalised_edit_distance: TODO
+    sha256: TODO
+    exported_at: TODO
+
+  - name: crnn_fa_digits.onnx
+    module: ocr
+    task: digit and date line recognition (national id, dates)
+    charset: "0123456789/"
+    trained_by: training/kaggle/train_crnn.py
+    dataset: TODO
+    commit: TODO
+    command: TODO
+    metrics:
+      exact_match: TODO
+    sha256: TODO
+    exported_at: TODO
