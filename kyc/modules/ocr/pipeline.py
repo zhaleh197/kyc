@@ -106,8 +106,13 @@ class DocumentOcrPipeline:
             ensure_min_size(image, cfg.min_image_side)
             image = rectify.prepare(image, cfg.max_image_side)
 
-            card, rectify_reasons = rectify.rectify(image, profile.rectified_size, profile.aspect_ratio)
-            reasons += rectify_reasons
+            if cfg.rectify:
+                card, rectify_reasons = rectify.rectify(image, profile.rectified_size, profile.aspect_ratio)
+                reasons += rectify_reasons
+            else:
+                # The detector was trained on whole frames, so it must see one.
+                # Field boxes are then reported in this frame's coordinates.
+                card = image
 
             quality_reasons, metrics = rectify.assess_quality(
                 card,

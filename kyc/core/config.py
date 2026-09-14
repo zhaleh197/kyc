@@ -27,6 +27,17 @@ class OcrSettings(BaseSettings):
     max_brightness: float = Field(215.0, description="Mean luma ceiling (0-255)")
     max_glare_ratio: float = Field(0.06, description="Max fraction of near-saturated pixels on the card")
 
+    # --- geometry ------------------------------------------------------
+    # Whether to flatten the card before running the detector.
+    #
+    # This must match how the detector was trained. Rectifying at serving time
+    # while the model was trained on whole frames (or the reverse) shows it a
+    # distribution it never saw. The classical rectifier only finds an outline
+    # when the card has a visible border against its background; on the real
+    # dataset it succeeded on 12% of images, so training there runs unrectified
+    # and this stays off.
+    rectify: bool = False
+
     # --- field detector ------------------------------------------------
     detector_conf: float = 0.35
     detector_iou: float = 0.45
@@ -34,8 +45,17 @@ class OcrSettings(BaseSettings):
     field_crop_padding: float = Field(0.06, description="Fraction of box size added around each field crop")
 
     # --- recognition ---------------------------------------------------
+    # Measured on the held-out eval_text.tsv/eval_digits.tsv split (see
+    # models/manifest.yaml): easyocr still edges out the fine-tuned CRNN on
+    # names (57.1% vs 38.8% exact-match), but the digit model flips this
+    # decisively (68.4% vs 7.0%) - easyocr's own allowlist does not actually
+    # restrict its output (confirmed directly against the library, see
+    # training/kaggle/README.md), while crnn_onnx.py's masking does. Keep
+    # re-measuring before changing either default; this is not a permanent
+    # verdict on either architecture, just what the current training data
+    # supports today.
     text_backend: str = Field("easyocr", description="Backend id for free-text fields")
-    digit_backend: str = Field("easyocr", description="Backend id for numeric fields")
+    digit_backend: str = Field("crnn_onnx_digits", description="Backend id for numeric fields")
     min_field_confidence: float = Field(0.40, description="Below this a field is reported but flagged low-confidence")
     upscale_small_crops_to: int = Field(64, description="Field crops shorter than this are upscaled before OCR")
 

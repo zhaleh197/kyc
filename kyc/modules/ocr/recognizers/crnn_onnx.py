@@ -24,7 +24,11 @@ from kyc.core.errors import ModelNotAvailable
 from .base import Recognition
 
 BLANK_INDEX = 0
-INPUT_HEIGHT = 32
+# Fallback only. The real height is read from each model's own ONNX input
+# shape (see __init__) - models trained from scratch here use 32, but a model
+# fine-tuned from EasyOCR's pretrained weights (training/kaggle/train_crnn.py
+# --finetune-from) inherits their convention of 64.
+DEFAULT_INPUT_HEIGHT = 32
 
 
 def load_charset(path: Path) -> list[str]:
@@ -88,9 +92,16 @@ class CrnnOnnxRecognizer:
         self.session = ort.InferenceSession(str(model_path), providers=providers)
         self.input_name = self.session.get_inputs()[0].name
         self.charset = load_charset(charset_path)
+        input_shape = self.session.get_inputs()[0].shape
         # Fixed-width exports report an int here; dynamic ones report a string.
-        width = self.session.get_inputs()[0].shape[3]
+        width = input_shape[3]
         self.fixed_width: int | None = width if isinstance(width, int) else None
+        # Read off the graph rather than assuming: a model fine-tuned from
+        # EasyOCR's pretrained weights was trained at height 64, not the 32
+        # this project's from-scratch models use, and there is no other
+        # signal here for which convention a given .onnx file follows.
+        height = input_shape[2]
+        self.input_height: int = height if isinstance(height, int) else DEFAULT_INPUT_HEIGHT
 
     @classmethod
     def load(
@@ -122,15 +133,16 @@ class CrnnOnnxRecognizer:
     def _preprocess(self, image: np.ndarray) -> np.ndarray:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
         h, w = gray.shape[:2]
-        scale = INPUT_HEIGHT / max(h, 1)
+        target_h = self.input_height
+        scale = target_h / max(h, 1)
         new_w = max(8, int(round(w * scale)))
         if self.fixed_width:
             new_w = min(new_w, self.fixed_width)
-        resized = cv2.resize(gray, (new_w, INPUT_HEIGHT), interpolation=cv2.INTER_CUBIC)
+        resized = cv2.resize(gray, (new_w, target_h), interpolation=cv2.INTER_CUBIC)
         if self.fixed_width and new_w < self.fixed_width:
             # Pad on the right with white; the model was trained on white
             # background crops, so black padding would look like ink.
-            pad = np.full((INPUT_HEIGHT, self.fixed_width - new_w), 255, np.uint8)
+            pad = np.full((target_h, self.fixed_width - new_w), 255, np.uint8)
             resized = np.hstack([resized, pad])
         normalized = (resized.astype(np.float32) / 127.5) - 1.0
         return normalized[None, None]  # NCHW with C=1

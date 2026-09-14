@@ -231,3 +231,9 @@ segmented_crops*/
 # Ultralytics training output
 runs/
 yolov8*.pt
+
+# Real identity-document datasets downloaded for local training. These are
+# actual Iranian national ID card photos - never belong in git history, no
+# matter how the file happens to be named or where it lands.
+phase6-ocr/idcardSegmentation*/
+phase6-ocr/*.zip

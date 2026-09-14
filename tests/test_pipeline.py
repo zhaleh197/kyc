@@ -11,7 +11,7 @@ from kyc.core.errors import ImageQualityError
 from kyc.core.schemas import Decision
 from kyc.modules.ocr.pipeline import DocumentOcrPipeline
 
-from .conftest import FakeDetector, SequenceRecognizer, make_card, photograph
+from .conftest import CARD_H, CARD_W, FakeDetector, SequenceRecognizer, make_card, photograph
 
 
 def build(settings: Settings, values: dict, confidence: float = 0.9) -> tuple[DocumentOcrPipeline, SequenceRecognizer]:
@@ -138,3 +138,48 @@ def test_rotated_photo_is_straightened(relaxed_settings, good_values):
     result = pipeline.run(rotated)
 
     assert result.data["values"]["national_id"] == "0012345679"
+
+
+def test_rectify_flag_controls_the_geometry_the_detector_sees(good_values):
+    """Train and serve must agree on whether the card is flattened first.
+
+    A detector trained on whole frames and served rectified crops (or the
+    reverse) sees a distribution it never saw, so this is config, not a
+    heuristic - and it needs to actually take effect.
+    """
+    from .conftest import FIELD_BOXES
+
+    scene = photograph(make_card())
+    seen: dict[str, tuple[int, int]] = {}
+
+    class ShapeRecordingDetector(FakeDetector):
+        def detect(self, image, conf_threshold, iou_threshold):
+            seen["shape"] = image.shape[:2]
+            return super().detect(image, conf_threshold, iou_threshold)
+
+    for rectify_on in (True, False):
+        settings = Settings(
+            ocr=OcrSettings(
+                rectify=rectify_on,
+                min_sharpness=1.0,
+                min_brightness=10.0,
+                max_brightness=250.0,
+                max_glare_ratio=1.0,
+            )
+        )
+        recognizer = SequenceRecognizer(good_values)
+        pipeline = DocumentOcrPipeline(
+            settings,
+            detector_factory=lambda profile: ShapeRecordingDetector(),
+            # Bound as a default so each iteration keeps its own recogniser
+            # rather than closing over the loop variable.
+            recognizer_factory=lambda backend_id, r=recognizer: r,
+        )
+        pipeline.run(scene)
+
+        if rectify_on:
+            assert seen["shape"] == (CARD_H, CARD_W), "rectified run should hand over the flattened card"
+        else:
+            assert seen["shape"] == scene.shape[:2], "unrectified run should hand over the original frame"
+
+    assert FIELD_BOXES  # layout fixture is what the fake detector reports

@@ -151,16 +151,23 @@ The OCR module needs `ir_national_card_front_fields.onnx` to run. Without it,
 requests return `503 model_not_available` naming the missing file — a service
 that silently stops reading a field is worse than one that refuses.
 
-Text recognition ships with two backends:
+Text recognition ships with two backends, and the defaults are mixed based on
+measurement, not architecture:
 
-- `easyocr` — pretrained, no training needed, ~1–2 s per card on CPU. The
-  bootstrap path.
-- `crnn_onnx` / `crnn_onnx_digits` — small CRNNs trained on your own crops.
-  Much faster and more accurate, and the digit model's 11-symbol alphabet
-  makes it structurally unable to hallucinate a letter into a national id.
+- `easyocr` — pretrained, no training needed, ~1–2 s per card on CPU. Still
+  the default for names: on this project's held-out eval set it beats the
+  fine-tuned CRNN (57.1% vs 38.8% exact-match).
+- `crnn_onnx` / `crnn_onnx_digits` — fine-tuned from EasyOCR's own pretrained
+  Arabic-script weights (see `training/kaggle/README.md`) rather than trained
+  from scratch. `crnn_onnx_digits` is the default for national id and dates:
+  a decisive win there (68.4% vs 7.0% exact-match), because easyocr's own
+  `allowlist` parameter does not actually restrict its output — confirmed
+  directly against the library — while this recogniser's allowlist masks
+  logits before decoding, a hard constraint.
 
-See `training/kaggle/README.md` for the full loop, including how to bootstrap
-a labelled crop set from `easyocr` output instead of transcribing by hand.
+Both defaults are overridable via `KYC_OCR_TEXT_BACKEND` /
+`KYC_OCR_DIGIT_BACKEND`. See `training/kaggle/README.md` for the full training
+loop and `models/manifest.yaml` for the measurements behind these numbers.
 
 ---
 

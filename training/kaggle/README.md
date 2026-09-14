@@ -210,11 +210,43 @@ You do not need labelled crops on day one. The default `easyocr` backend runs
 without any training, so:
 
 1. Train the field detector first — that only needs box labels on whole cards.
-2. Run the pipeline over your card images with `easyocr` and save every field
-   crop plus its predicted text.
-3. Correct the predictions by hand. Fixing OCR output is several times faster
-   than transcribing from scratch.
-4. Train the CRNNs on the corrected set and switch the backends.
+2. Run it over your card images and save every field crop plus a guess from
+   `easyocr`:
+
+   ```bash
+   python -m scripts.bootstrap_crnn_dataset --src .data/ir_card_norm --out .data/crnn_bootstrap
+   ```
+
+   Crops are cut with the exact padding and upscale settings the serving
+   pipeline uses, so the CRNN trains on the same distribution it will be
+   served in production. Names and dates land in separate TSVs
+   (`labels_text.tsv` / `labels_digits.tsv`) next to `crops/text/` and
+   `crops/digits/`.
+
+3. Open the TSVs and correct the guessed text. Fixing OCR output is several
+   times faster than transcribing from scratch — on this project's first
+   real batch, clean detections like `محمد` and `روح الله` came back
+   correct or nearly so, while the digit-only fields did not (see the note
+   on allowlists below) and every date needed retyping. Delete the row for
+   any crop that is not legible; a wrong label teaches the model a wrong
+   answer more effectively than a missing one costs it.
+4. Train the CRNNs on the corrected set and switch the backends:
+
+   ```bash
+   python training/kaggle/train_crnn.py --labels .data/crnn_bootstrap/labels_text.tsv \
+       --name crnn_fa_text
+   python training/kaggle/train_crnn.py --labels .data/crnn_bootstrap/labels_digits.tsv \
+       --name crnn_fa_digits --charset "0123456789/"
+   ```
+
+### easyocr's `allowlist` is not reliable
+
+Confirmed directly against the reader: even with `allowlist="0123456789/"`,
+Arabic letters still came out of digit-only crops. This is a limitation of
+easyocr itself, not of the pipeline's own masking — `crnn_onnx.py`'s decoder
+masks logits before argmax, which is why the trained CRNN does not have this
+problem once it exists. Until then, expect the digit-field guesses in
+`labels_digits.tsv` to need full retyping rather than light correction.
 
 ## Why a separate digit model
 

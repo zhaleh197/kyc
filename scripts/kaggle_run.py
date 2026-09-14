@@ -30,6 +30,38 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
+# The Kaggle SDK writes downloaded logs with the interpreter's default text
+# encoding. On Windows that is cp1252, and a log containing Persian text or the
+# box-drawing characters ultralytics prints raises UnicodeEncodeError *after*
+# the download has already succeeded. The failure is indistinguishable from a
+# network error unless you read the exception type, and it cost a long detour
+# chasing a block that was not there.
+#
+# UTF-8 mode cannot be switched on from inside a running interpreter - setting
+# PYTHONUTF8 here would only affect child processes - so re-exec once with it
+# set. The guard variable stops that from recursing.
+if os.name == "nt" and not sys.flags.utf8_mode and not os.environ.get("_KYC_UTF8_REEXEC"):
+    os.environ["_KYC_UTF8_REEXEC"] = "1"
+    os.environ["PYTHONUTF8"] = "1"
+    # Keep the repo importable so `-m scripts.kaggle_run` resolves from any cwd.
+    os.environ["PYTHONPATH"] = os.pathsep.join(
+        p for p in (str(REPO_ROOT), os.environ.get("PYTHONPATH", "")) if p
+    )
+    relaunch = [sys.executable, "-X", "utf8"]
+    if __package__:  # started with -m; keep it that way
+        relaunch += ["-m", "scripts.kaggle_run", *sys.argv[1:]]
+    else:
+        relaunch += sys.argv
+    # subprocess, not os.execv: on Windows execv flattens argv into a command
+    # line without quoting, so any argument containing a space (--notes "a b")
+    # arrives split into pieces and argparse rejects it.
+    import subprocess  # noqa: PLC0415 - only needed on this path
+
+    sys.exit(subprocess.run(relaunch).returncode)
+
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 SRC_DATASET_SLUG = "kyc-src"          # must match SRC_DATASET in the notebook
 KERNEL_SLUG = "kyc-field-detector"
 NOTEBOOK = REPO_ROOT / "training" / "kaggle" / "train_field_detector.ipynb"
@@ -139,12 +171,17 @@ def with_retries(action, label: str, attempts: int = 5, backoff: float = 6.0):
 def normalise_state(value) -> str:
     """Reduce whatever kernels_status returns to a bare lowercase state.
 
-    The SDK has returned a plain string, a camel-cased string and an enum
-    (`KernelWorkerStatus.ERROR`) across versions. Comparing the raw value meant
-    the watch loop never recognised a terminal state and polled until the
-    network gave out.
+    The SDK has returned a plain string, a camel-cased string, and an enum
+    across versions - and the enum member names use underscores
+    ("KernelWorkerStatus.CANCEL_ACKNOWLEDGED") while TERMINAL_STATES was
+    written without them ("cancelacknowledged"). That mismatch meant a
+    cancelled run was never recognised as terminal: the watch loop kept
+    polling for 21 minutes past the actual cancellation, printing the same
+    status every cycle, until the network itself gave out and the loop
+    crashed rather than reporting the cancellation. Stripping underscores
+    here is what makes the two spellings actually compare equal.
     """
-    return str(value).rsplit(".", 1)[-1].strip().strip('"').lower()
+    return str(value).rsplit(".", 1)[-1].strip().strip('"').lower().replace("_", "")
 
 
 def wait_for_dataset(api, dataset_id: str, timeout: int) -> None:
@@ -246,13 +283,15 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 
 def cmd_push(args: argparse.Namespace) -> int:
-    if not NOTEBOOK.exists():
-        raise SystemExit(f"Notebook not found at {NOTEBOOK}")
+    notebook = Path(args.notebook)
+    kernel_slug = args.kernel_slug
+    if not notebook.exists():
+        raise SystemExit(f"Notebook not found at {notebook}")
 
     api = load_api()
     user = username(api)
     src_id = f"{user}/{SRC_DATASET_SLUG}"
-    kernel_id = f"{user}/{KERNEL_SLUG}"
+    kernel_id = f"{user}/{kernel_slug}"
 
     with tempfile.TemporaryDirectory() as tmp:
         # --- 1. source code as a private dataset -------------------------
@@ -303,20 +342,20 @@ def cmd_push(args: argparse.Namespace) -> int:
         # --- 2. the training kernel ---------------------------------------
         kernel_dir = Path(tmp) / "kernel"
         kernel_dir.mkdir()
-        shutil.copy2(NOTEBOOK, kernel_dir / NOTEBOOK.name)
+        shutil.copy2(notebook, kernel_dir / notebook.name)
 
         sources = [src_id]
         if args.data_dataset:
             sources.append(args.data_dataset)
         else:
-            print("[warn] no --data-dataset given; attach your card dataset in the Kaggle UI before running")
+            print("[warn] no --data-dataset given; attach your dataset in the Kaggle UI before running")
 
         (kernel_dir / "kernel-metadata.json").write_text(
             json.dumps(
                 {
                     "id": kernel_id,
-                    "title": "KYC field detector",
-                    "code_file": NOTEBOOK.name,
+                    "title": args.title or kernel_slug,
+                    "code_file": notebook.name,
                     "language": "python",
                     "kernel_type": "notebook",
                     "is_private": True,
@@ -376,6 +415,37 @@ def cmd_watch(args: argparse.Namespace) -> int:
         time.sleep(args.interval)
 
 
+def cmd_logs(args: argparse.Namespace) -> int:
+    """Print the last run's execution log.
+
+    Kaggle returns the log as a JSON array of records, not plain text, so it
+    needs unpacking before it is readable.
+    """
+    api = load_api()
+    kernel = args.kernel or read_state().get("kernel")
+    if not kernel:
+        raise SystemExit("No kernel known. Pass --kernel <owner>/<slug> or run `push` first.")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        with_retries(lambda: api.kernels_output(kernel, path=tmp), "log download", attempts=5)
+        logs = list(Path(tmp).rglob("*.log"))
+        if not logs:
+            print("The run produced no log file yet.")
+            return 1
+        raw = logs[0].read_text(encoding="utf-8", errors="replace")
+
+    try:
+        lines = [str(record.get("data", "")).rstrip() for record in json.loads(raw)]
+    except (json.JSONDecodeError, AttributeError, TypeError):
+        lines = raw.splitlines()
+
+    lines = [line for line in lines if line]
+    if args.tail:
+        lines = lines[-args.tail :]
+    print("\n".join(lines))
+    return 0
+
+
 def cmd_pull(args: argparse.Namespace) -> int:
     api = load_api()
     kernel = args.kernel or read_state().get("kernel")
@@ -402,19 +472,27 @@ def cmd_pull(args: argparse.Namespace) -> int:
 
 
 def cmd_upload_data(args: argparse.Namespace) -> int:
-    """Upload a prepared card dataset to Kaggle as a PRIVATE dataset.
+    """Upload a prepared dataset to Kaggle as a PRIVATE dataset.
 
     Deliberately gated behind --confirm and a dry-run summary. This is the one
     command in the project that sends identity documents to a third party, and
     that should never happen as an incidental side effect.
+
+    Accepts either a YOLO-format dataset (data.yaml present) or any other
+    folder of images plus their labels, e.g. the CRNN bootstrap crops - the
+    real safety gate here is --confirm and the printed warning below, not the
+    presence of one particular file that only one of this project's dataset
+    shapes happens to have.
     """
     source = Path(args.path)
-    if not (source / "data.yaml").exists():
-        raise SystemExit(f"{source} does not look like a prepared dataset (no data.yaml)")
+    if not source.is_dir():
+        raise SystemExit(f"{source} does not exist or is not a directory")
 
     files = [p for p in source.rglob("*") if p.is_file()]
     total_bytes = sum(p.stat().st_size for p in files)
     images = sum(1 for p in files if p.suffix.lower() in {".jpg", ".jpeg", ".png", ".bmp", ".webp"})
+    if images == 0:
+        raise SystemExit(f"{source} contains no image files - does not look like a dataset to upload")
 
     print(f"source : {source}")
     print(f"files  : {len(files)} ({images} images)")
@@ -476,11 +554,22 @@ def main() -> int:
     upload.set_defaults(func=cmd_upload_data)
 
     push = subparsers.add_parser("push", help="Upload the source and push the training notebook")
+    push.add_argument(
+        "--kernel-slug", default=KERNEL_SLUG, help=f"Kaggle kernel to push (default: {KERNEL_SLUG})"
+    )
+    push.add_argument(
+        "--notebook", default=str(NOTEBOOK), help=f"Notebook to push (default: {NOTEBOOK.relative_to(REPO_ROOT)})"
+    )
+    push.add_argument("--title", default=None, help="Kernel title; defaults to the kernel slug")
     push.add_argument("--data-dataset", default=None, help="Your card dataset as <owner>/<slug>")
     push.add_argument("--notes", default="automated push", help="Dataset version notes")
     push.add_argument("--dataset-wait", type=int, default=300, help="Seconds to wait for the dataset to become ready")
     push.add_argument("--attempts", type=int, default=5, help="Retries per upload when the network blocks one")
     push.set_defaults(func=cmd_push)
+
+    logs = subparsers.add_parser("logs", help="Print the last run's execution log")
+    logs.add_argument("--kernel", default=None)
+    logs.add_argument("--tail", type=int, default=60, help="Lines to show; 0 for all")
 
     watch = subparsers.add_parser("watch", help="Poll the kernel until it finishes")
     watch.add_argument("--kernel", default=None)
@@ -492,6 +581,7 @@ def main() -> int:
         help="Seconds to keep waiting when the very first poll already reports a terminal state, "
         "since that is usually the previous run's status. 0 disables.",
     )
+    logs.set_defaults(func=cmd_logs)
     watch.set_defaults(func=cmd_watch)
 
     pull = subparsers.add_parser("pull", help="Download the exported model into models/")

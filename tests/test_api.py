@@ -99,7 +99,7 @@ def test_too_small_image_returns_422(client):
     assert response.json()["error"] == "image_quality"
 
 
-def test_missing_detector_model_returns_503(relaxed_settings, card_jpeg):
+def test_missing_detector_model_returns_503(relaxed_settings, card_jpeg, tmp_path):
     """The real pipeline must refuse loudly when a model artifact is absent -
     a KYC service that silently stops reading a field is worse than one that
     fails the request."""
@@ -107,7 +107,12 @@ def test_missing_detector_model_returns_503(relaxed_settings, card_jpeg):
 
     from kyc.modules.ocr.pipeline import DocumentOcrPipeline as RealPipeline
 
-    app.dependency_overrides[get_pipeline] = lambda: RealPipeline(relaxed_settings)
+    # Point at an empty directory rather than the project's real models/ -
+    # this test asserts what happens when the artifact is missing, and it
+    # must not start passing or failing based on whatever is actually
+    # installed there.
+    settings = relaxed_settings.model_copy(update={"models_dir": tmp_path})
+    app.dependency_overrides[get_pipeline] = lambda: RealPipeline(settings)
     try:
         response = TestClient(app).post(
             "/v1/ocr/document/base64",

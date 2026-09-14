@@ -32,8 +32,26 @@ sys.path.insert(0, str(REPO_ROOT))
 from kyc.modules.ocr.profiles import get_profile  # noqa: E402
 from scripts.prepare_dataset import build_remap, find_pairs, parse_label, write_data_yaml  # noqa: E402
 
-SPLITS = ("train", "valid", "test")
+# Roboflow names the validation split "valid"; ultralytics and our own
+# data.yaml call it "val". Both are accepted as input so that re-running
+# this over an already-normalised dataset does not silently drop the
+# validation set - which is exactly what happened once, and ultralytics
+# then refused the data.yaml for a missing "val:" key.
+SPLITS = ("train", "valid", "val", "test")
+SPLIT_ALIASES = {"valid": "val"}
 
+
+class MissingExport(RuntimeError):
+    """The version's export file is gone from Roboflow's storage.
+
+    Permanent, so it must not be retried - only a regeneration in the
+    dashboard, or a different version, can fix it.
+    """
+
+
+# Roboflow builds exports on demand; large versions take a while.
+EXPORT_TIMEOUT = 900
+EXPORT_POLL_SECONDS = 10
 
 # Both spellings are accepted: ROBOFLOW_API_KEY is what Roboflow's own docs
 # use, ROBOFLOW_KEY is what people tend to type.
@@ -67,6 +85,104 @@ def load_api_key() -> str:
     return key
 
 
+def fetch_export(workspace: str, project: str, version: int, fmt: str, dest: Path, key: str) -> Path:
+    """Download and unpack one Roboflow export, without the SDK in the way.
+
+    The SDK wraps the two-step flow (ask the API for a signed link, then fetch
+    it from Google storage) and reports any failure as a bare `BadZipFile`,
+    having already written the error page to disk as `roboflow.zip`. That hid
+    the real cause through several rounds of debugging - the response was an
+    HTML error, and nothing said so.
+
+    Doing it directly means an unexpected response is quoted in the exception
+    instead of being mistaken for a corrupt archive.
+    """
+    import zipfile
+
+    import requests
+
+    dest.mkdir(parents=True, exist_ok=True)
+
+    # Roboflow builds an export lazily. Requesting the format endpoint queues
+    # the build and answers `ready: false` with a progress fraction; the signed
+    # link it returns meanwhile points at an object that does not exist yet.
+    # Downloading without waiting is what produced "NoSuchKey" from storage,
+    # which the SDK then surfaced as a corrupt-zip error.
+    endpoint = f"https://api.roboflow.com/{workspace}/{project}/{version}/{fmt}"
+    deadline = time.time() + EXPORT_TIMEOUT
+    link = None
+
+    while time.time() < deadline:
+        meta = requests.get(endpoint, params={"api_key": key}, timeout=90)
+
+        # 202 means the export does not exist yet and this request queued it.
+        # Treating it as an error - which is what a naive `!= 200` check does -
+        # turns "wait a minute" into "this dataset cannot be downloaded".
+        if meta.status_code == 202:
+            print(f"[rf] Roboflow is generating the {fmt} export for v{version}; waiting")
+            time.sleep(EXPORT_POLL_SECONDS)
+            continue
+        if meta.status_code != 200:
+            raise RuntimeError(f"export endpoint returned HTTP {meta.status_code}: {summarise(meta.text)}")
+
+        payload = meta.json()
+        export = payload.get("export") or {}
+        if export.get("ready") is False or payload.get("ready") is False:
+            progress = export.get("progress", payload.get("progress", 0.0)) or 0.0
+            print(f"[rf] Roboflow is still building the {fmt} export: {progress * 100:.0f}%")
+            time.sleep(EXPORT_POLL_SECONDS)
+            continue
+
+        link = export.get("link")
+        break
+
+    if not link:
+        available = (meta.json().get("version") or {}).get("exports")
+        raise RuntimeError(
+            f"no usable download link for format {fmt!r} within {EXPORT_TIMEOUT}s; "
+            f"formats listed for this version: {available}"
+        )
+
+    response = requests.get(link, timeout=600, stream=True, allow_redirects=True)
+    if response.status_code == 404 and "NoSuchKey" in response.text:
+        # The API happily hands out a signed link for an export whose object is
+        # gone from storage. Retrying cannot fix that, and six attempts against
+        # a permanent 404 only buries the real message.
+        raise MissingExport(
+            f"Roboflow lists a {fmt} export for v{version} but the file is missing from its storage. "
+            f"Regenerate that version in the Roboflow dashboard (Versions > v{version} > Download), "
+            f"or use a version whose export still exists."
+        )
+    if response.status_code != 200:
+        raise RuntimeError(f"storage returned HTTP {response.status_code}: {summarise(response.text)}")
+
+    archive = dest / "roboflow.zip"
+    with archive.open("wb") as handle:
+        for chunk in response.iter_content(1 << 20):
+            handle.write(chunk)
+
+    if not zipfile.is_zipfile(archive):
+        head = archive.read_bytes()[:400]
+        content_type = response.headers.get("content-type", "?")
+        raise RuntimeError(
+            f"downloaded {archive.stat().st_size} bytes of {content_type}, not a zip. "
+            f"Response began: {summarise(head.decode('utf-8', 'replace'))}"
+        )
+
+    with zipfile.ZipFile(archive) as bundle:
+        bundle.extractall(dest)
+    archive.unlink()
+    return dest
+
+
+def summarise(text: str, limit: int = 220) -> str:
+    """Collapse an HTML or JSON error body to one readable line."""
+    import re
+
+    stripped = re.sub(r"<[^>]+>", " ", text or "")
+    return " ".join(stripped.split())[:limit] or "(empty response)"
+
+
 def download(
     workspace: str | None,
     project: str,
@@ -83,27 +199,18 @@ def download(
     on requests that succeed moments later. Retrying is the difference between
     "this does not work here" and "this takes two minutes".
     """
-    try:
-        from roboflow import Roboflow
-    except ImportError:
-        raise SystemExit("The roboflow package is not installed:  pip install roboflow") from None
-
     key = load_api_key()
     last_error: Exception | None = None
 
     for attempt in range(1, attempts + 1):
         try:
-            rf = Roboflow(api_key=key)
-            # Without an explicit workspace the SDK uses the key's *default*
-            # workspace, which is not necessarily the one holding the project.
-            space = rf.workspace(workspace) if workspace else rf.workspace()
-            handle = space.project(project).version(version)
-            print(f"[rf] downloading {workspace or space.url}/{project}:v{version} as {fmt} (attempt {attempt})")
-            dataset = handle.download(fmt, location=str(dest), overwrite=True)
-            location = Path(getattr(dataset, "location", dest))
+            print(f"[rf] downloading {workspace}/{project}:v{version} as {fmt} (attempt {attempt})")
+            location = fetch_export(workspace, project, version, fmt, dest, key)
             print(f"[rf] downloaded to {location}")
             return location
-        except Exception as exc:  # noqa: BLE001 - the SDK wraps everything in RoboflowError
+        except MissingExport as exc:
+            raise SystemExit(f"[rf] {exc}") from exc
+        except Exception as exc:  # noqa: BLE001 - requests raises a wide family here
             last_error = exc
             summary = " ".join(str(exc).split())[:120]
             print(f"[rf] attempt {attempt}/{attempts} failed: {type(exc).__name__}: {summary}")
@@ -172,8 +279,9 @@ def normalise(location: Path, out: Path, profile_id: str) -> int:
         split_dir = location / split
         if not split_dir.is_dir():
             continue
-        # Roboflow calls it "valid"; ultralytics and our data.yaml use "val".
-        target_split = "val" if split == "valid" else split
+        target_split = SPLIT_ALIASES.get(split, split)
+        if target_split in written:
+            continue  # both spellings present; the first one wins
         (out / target_split / "images").mkdir(parents=True)
         (out / target_split / "labels").mkdir(parents=True)
 
@@ -195,7 +303,7 @@ def normalise(location: Path, out: Path, profile_id: str) -> int:
         written[target_split] = len(pairs)
 
     if not written:
-        raise SystemExit(f"No train/valid/test folders found in {location}")
+        raise SystemExit(f"No train/valid/val/test folders found in {location}")
 
     write_data_yaml(out, class_names, list(written))
 
@@ -222,14 +330,18 @@ def normalise(location: Path, out: Path, profile_id: str) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--workspace", default=None, help="Roboflow workspace id; defaults to the key owner")
-    parser.add_argument("--project", required=True, help="Roboflow project id")
-    parser.add_argument("--version", type=int, required=True)
+    # Not required with --skip-download: normalising an export you already
+    # have on disk needs no project coordinates.
+    parser.add_argument("--project", default=None, help="Roboflow project id")
+    parser.add_argument("--version", type=int, default=None)
     parser.add_argument("--format", default="yolov8", help="Roboflow export format")
     parser.add_argument("--profile", default="ir_national_card_front")
     parser.add_argument("--raw", default=str(REPO_ROOT / ".data" / "roboflow_raw"), help="Where the export lands")
     parser.add_argument("--out", default=str(REPO_ROOT / ".data" / "ir_card_yolo"), help="Normalised dataset")
     parser.add_argument("--skip-download", action="store_true", help="Reuse an export already in --raw")
     args = parser.parse_args()
+    if not args.skip_download and (not args.project or args.version is None):
+        raise SystemExit("--project and --version are required unless --skip-download is given")
 
     raw = Path(args.raw)
     if args.skip_download:
