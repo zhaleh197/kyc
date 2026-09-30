@@ -56,10 +56,17 @@ class EasyOcrRecognizer:
         if not results:
             return Recognition.empty()
 
-        # A field crop may still split into several boxes (e.g. a date around
-        # its separators). Join left-to-right and weight confidence by length
-        # so a stray one-character box cannot drag the score down.
-        results.sort(key=lambda r: r[0][0][0])
+        # A field crop may still split into several boxes (e.g. two words of
+        # a name, or a date around its separators). Free Persian/Arabic text
+        # is right-to-left - the box that reads FIRST sits at the largest x -
+        # so sorting ascending (correct for Latin script) joined a two-word
+        # name backwards ("کانی پان" -> "پان کانی"). Digits and dates go the
+        # other way: numerals render left-to-right even inside RTL text, so
+        # day/month/year boxes must stay in ascending x order. `allowlist` is
+        # only ever passed for the digit/date fields (see profiles/iran.py -
+        # no FieldSpec of kind TEXT sets charset_hint), so its presence is
+        # what tells the two cases apart here.
+        results.sort(key=lambda r: r[0][0][0], reverse=allowlist is None)
         texts = [str(r[1]).strip() for r in results if str(r[1]).strip()]
         if not texts:
             return Recognition.empty()

@@ -22,7 +22,20 @@ class OcrSettings(BaseSettings):
     # --- input gating -------------------------------------------------
     min_image_side: int = Field(400, description="Reject documents smaller than this on the short side")
     max_image_side: int = Field(2400, description="Downscale anything larger before processing")
-    min_sharpness: float = Field(60.0, description="Laplacian variance floor for the rectified card")
+    # 60 was calibrated assuming a rectified, cropped card (little background
+    # in frame). With rectify=False (see below) this metric runs on the whole
+    # photo instead, and most of that frame is smooth background/table, which
+    # drags the measured variance down regardless of how sharp the card
+    # itself is - real, clearly legible test photos measured 17-52, well
+    # under the old default, and were rejected outright. Lowered to a floor
+    # that still catches a genuinely out-of-focus frame without false-
+    # rejecting normal photos in this operating mode. The correct long-term
+    # fix is measuring sharpness on the detected card region specifically
+    # (once the field detector has located it) rather than the whole scene -
+    # not done yet, tracked as a follow-up.
+    min_sharpness: float = Field(
+        12.0, description="Laplacian variance floor, measured on the whole frame when rectify=false"
+    )
     min_brightness: float = Field(45.0, description="Mean luma floor (0-255)")
     max_brightness: float = Field(215.0, description="Mean luma ceiling (0-255)")
     max_glare_ratio: float = Field(0.06, description="Max fraction of near-saturated pixels on the card")
