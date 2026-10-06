@@ -105,41 +105,41 @@ pip install "polars[rtcompat]"
 
 Serving is unaffected: onnxruntime runs fine without AVX2.
 
-## 0.7 Train on rectified cards, not on raw photos
+## 0.7 Train and serve with the same geometry
 
-This one is easy to get wrong and expensive to discover late.
+This one is easy to get wrong and expensive to discover late. Whatever the
+detector sees in training, it must see in serving — `KYC_OCR_RECTIFY` decides
+which.
 
-The serving pipeline flattens the card **before** it runs the detector, so at
-inference time the detector only ever sees a 1024x646 rectified card. If it was
-trained on raw phone photos, the training and serving distributions disagree:
-the model burns capacity on perspective it will never encounter, and boxes land
-slightly off on exactly the fields that matter.
+**Current state: unrectified.** The shipped detector is trained on raw photos
+and served with `KYC_OCR_RECTIFY=false` (`models/manifest.yaml`). On the real
+dataset (`westco/idcardsegmentation-gz97d` v8) cards fill ~45% of each frame
+with no clean border, and the classical rectifier found an outline in only 12%
+of images. Rectifying would have warped that 12% and merely resized the rest —
+two geometries in one training set. With the field detector trained on whole
+frames, field boxes are reported in frame coordinates.
 
-Roboflow datasets are almost always labelled on raw photos. Convert them:
+**When rectifying is worth it:** a dataset where the rectifier finds the card
+in most images (the report below tells you). Then train on rectified cards and
+flip `KYC_OCR_RECTIFY=true` in serving, together:
 
 ```bash
 python -m scripts.rectify_dataset --src .data/ir_card_yolo --out .data/ir_card_rectified
-```
-
-That runs the same rectifier the runtime uses and moves every annotation
-through the identical 3x3 transform, so labels stay on their fields. One
-implementation, one geometry — the dataset cannot drift from the runtime.
-
-Then train on the rectified folder:
-
-```bash
 python -m scripts.kaggle_run upload-data --path .data/ir_card_rectified --confirm
 ```
 
-Watch the report. If the card outline could not be found in more than about a
-quarter of the images, inspect a few before training — the classical rectifier
-struggles on busy backgrounds and borderless scans, and a mis-rectified card
-teaches the detector bad boxes. Those images are resized rather than warped and
-stay in the set unless you pass `--require-border`.
+That runs the same rectifier the runtime uses and moves every annotation
+through the identical 3x3 transform, so labels stay on their fields. Watch the
+report: if the outline was not found in more than about a quarter of the
+images, stay unrectified. Images without an outline are resized rather than
+warped and stay in the set unless you pass `--require-border`.
+
+Thresholds follow the geometry too: `KYC_OCR_MIN_SHARPNESS` is 12 for whole
+frames (legible photos measured 17–52); a rectified card needs recalibrating.
 
 ## 1. Field detector
 
-Detects the card outline and the box of every field on the rectified card.
+Detects the card outline and the box of every field (on the raw photo, see §0.7).
 
 ```bash
 pip install ultralytics onnx onnxsim
@@ -170,26 +170,46 @@ field, and every downstream check would still pass.
 
 Output: `ir_national_card_front_fields.onnx` → copy into `models/`.
 
-`yolov8n` is the right starting point. On a rectified card the task is nearly
-a fixed-layout problem, so a nano model reaches high mAP and stays fast on CPU.
-Only move to `yolov8s` if `img`/`idnumber` AP50 stays below ~0.95.
+`yolov8n` is the current model: recall@IoU0.5 is 1.00 on every class of the
+19 held-out test images except `name`/`lastname` (0.84, a crowded column).
+Only move to `yolov8s` if that gap does not close with more data.
 
 ## 2. Text recognisers
 
-Train two, from the same script:
+Both are **fine-tuned from EasyOCR's pretrained Arabic-script recogniser**
+(`arabic.pth`, usually `~/.EasyOCR/model/arabic.pth` after `easyocr.Reader`
+has run once), not trained from scratch. Same architecture family (ResNet +
+2-layer BiLSTM + CTC, blank=0); its 184-symbol charset covers every corrected
+label in this project. From-scratch training got 16.3% exact-match on names;
+fine-tuning got 34.7% raw.
+
+Run on Kaggle (T4) via `train_crnn_finetune.ipynb`, or directly:
 
 ```bash
 # free text: names
-python train_crnn.py --labels /kaggle/input/ir-lines/labels.tsv \
-                     --name crnn_fa_text --epochs 60
+python training/kaggle/train_crnn.py     --labels .data/crnn_bootstrap/sample_text_combined.tsv     --name crnn_fa_text --epochs 80 --batch 16 --device cuda     --finetune-from <path to arabic.pth> --out models
 
 # digits: national id and dates
-python train_crnn.py --labels /kaggle/input/ir-digits/labels.tsv \
-                     --name crnn_fa_digits --charset "0123456789/" --epochs 40
+python training/kaggle/train_crnn.py     --labels .data/crnn_bootstrap/sample_digits_combined.tsv     --name crnn_fa_digits --epochs 80 --batch 16 --device cuda     --finetune-from <path to arabic.pth> --out models
 ```
 
-Labels are a TSV: `relative/image/path<TAB>text`, one line per crop.
+`--charset` is ignored with `--finetune-from` (the script warns): resizing
+EasyOCR's output layer would discard its weights. Both models keep the full
+184-symbol charset; the digit-only guarantee comes from the serving-time
+allowlist mask in `crnn_onnx.py`.
 
+Things that bit us, now handled in the script:
+
+- EasyOCR's `forward()` returns `(N, T, C)`; `CTCLoss` wants `(T, N, C)`.
+  Identical at batch 1, silently wrong at batch 16.
+- Best checkpoint is chosen by **edit distance**, not exact match (which sits
+  at 0.0 for many epochs on a small validation split).
+- `--batch` defaults to 16; 64 against ~250 rows gave ~4 steps per epoch.
+- `num_workers=0`: a multi-worker DataLoader hung 12h+ on Windows.
+- Model input height is read from the ONNX graph at serving (64 px for these
+  models, not 32).
+
+Labels are a TSV: `relative/image/path<TAB>text`, one line per crop.
 Outputs, all four into `models/`:
 
 ```
@@ -197,12 +217,15 @@ crnn_fa_text.onnx     crnn_fa_text.charset.txt
 crnn_fa_digits.onnx   crnn_fa_digits.charset.txt
 ```
 
-Then switch the backends:
+**Which backend serves which field is decided by measurement**, on the
+held-out `test_` split (`models/manifest.yaml`):
 
-```bash
-KYC_OCR_TEXT_BACKEND=crnn_onnx
-KYC_OCR_DIGIT_BACKEND=crnn_onnx_digits
-```
+| Field kind | easyocr | fine-tuned CRNN | Default |
+|---|---|---|---|
+| names (49 crops) | **57.1%** | 38.8% | `KYC_OCR_TEXT_BACKEND=easyocr` |
+| digits/dates (57 crops) | 7.0% | **68.4%** | `KYC_OCR_DIGIT_BACKEND=crnn_onnx_digits` |
+
+Re-measure before changing either default.
 
 ## Bootstrapping the label set
 

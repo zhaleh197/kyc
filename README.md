@@ -29,6 +29,9 @@ hosted inference API.
 The `phase*/` directories are the original standalone prototypes. They still
 run on their own; they are migrated into `kyc/modules/` one at a time.
 
+Each module has a spec in [`specs/`](specs/README.md) — retrospective for OCR,
+written up-front for the rest.
+
 ---
 
 ## Quick start
