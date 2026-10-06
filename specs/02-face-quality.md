@@ -4,6 +4,10 @@ Status: **up-front spec**. Prototype: `phase1_facedetect/final.py` (Flask) +
 `templates/final.html`. A single-image variant exists in
 `phase1_facedetect/claude_api/main.py` (`/kyc/face-quality`).
 
+**Implementation (2026-10-06, branch `face-capture`)**: `kyc/modules/face_capture/`
++ shared runners in `kyc/core/face/`. Sessions, capture_id, all checks below
+except occlusion and gaze. See §12 for what was measured while building it.
+
 ## 1. Purpose
 
 **This module takes the selfie.** It runs a guided capture loop on the user's
@@ -206,3 +210,39 @@ of the four occlusion models; model loading at import time.
   background is common; a second face held up on a phone is an attack.)
 - Clear glasses allowed? Head covering allowed while the face oval is
   visible — a policy decision, not a model decision.
+
+## 12. Build log — what was verified, what changed (2026-10-06)
+
+Assumptions (§9):
+
+- **2 — confirmed.** `det_10g`, `2d106det`, `w600k_r50` load in plain
+  onnxruntime; no `insightface` package. `det_10g` has a fixed 640×640
+  input. `2d106det` normalises inside its graph and must get raw 0–255
+  pixels (the detector wants (x−127.5)/128) — a silent-wrong-output trap.
+- **3 — resolved: 5 points are enough for pose, 106 are needed for eyes.**
+  5-point **solvePnP was unstable**: mirroring a photo moved yaw from −6° to
+  +20° (should be +6°) and gave 52° pitch on a frontal photo. Replaced with a
+  closed-form, mirror-symmetric pose from the 5 keypoints
+  (`kyc/core/face/geometry.py`); mirror test now agrees within detector noise,
+  and a photo with the head tipped far back reads +56° pitch, correct sign.
+- **4 — confirmed (channel order).** Landmarks rendered on a photo land on
+  the face; eye indices were read off that render.
+- **1 — still open.** No webcam frames yet; every threshold is a first guess
+  from 15 still photos (marked in `config.py`).
+
+Changes to this spec from what was found:
+
+- **`uneven_lighting` is `info`, not `warn`.** 6 of 15 ordinary indoor test
+  photos had left/right light asymmetry above 0.5 (on the whole face box and
+  on its inner region alike). As a warning it would send many genuine users
+  to manual review for normal room light.
+- **Context for anti-spoof doesn't fit a normal selfie.** A face at 35% of
+  frame height leaves room for only ~2× context, while MiniFASNet wants 2.7×
+  and 4.0×. The check exists (`min_context_scale`) but is off until 04
+  measures what it needs — see 04 §8.2.
+- **Detector latency ~220–290 ms/frame** on the dev machine (no AVX2), over
+  Q7's proposed 150 ms. Re-measure on the target server; `det_500m`
+  (buffalo_s) is the fallback.
+
+Not built yet: occlusion classifier (needs a trained model — Q5),
+gaze check, multi-worker session store (Redis).

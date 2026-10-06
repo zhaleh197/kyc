@@ -20,7 +20,7 @@ hosted inference API.
 | Module | State | Location |
 |---|---|---|
 | **Document OCR** | built, tested | `kyc/modules/ocr/` |
-| Face quality / detection | prototype, not migrated | `phase1_facedetect/` |
+| Face capture & quality | in progress: sessions, checks, tests; thresholds not yet calibrated on webcam frames | `kyc/modules/face_capture/` |
 | Face matching | prototype, not migrated | `phase2_facematch/` |
 | Anti-spoofing (passive) | prototype, not migrated | `phase3-antispoof/` |
 | Liveness (active) | prototype, not migrated | `phase4-liveness/` |
@@ -49,8 +49,8 @@ Interactive docs at <http://127.0.0.1:8000/docs>.
 pytest
 ```
 
-82 tests, no model weights or real documents required — the pipeline's
-detector and recogniser are injectable and the suite substitutes fakes.
+116 tests, no model weights, real documents or real faces required — every
+pipeline's models are injectable and the suite substitutes fakes.
 
 ---
 

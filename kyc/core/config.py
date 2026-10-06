@@ -76,6 +76,65 @@ class OcrSettings(BaseSettings):
     review_on_low_confidence: bool = True
 
 
+class FaceQualitySettings(BaseSettings):
+    """Face capture (selfie) gate. See specs/02-face-quality.md.
+
+    Unless a comment says otherwise, the defaults below are first guesses
+    checked only against ~15 still photos (phase*/test images), NOT against
+    frames from the real browser capture path. Recalibrate them on webcam
+    frames before relying on them (spec 02, Q6).
+    """
+
+    model_config = SettingsConfigDict(env_prefix="KYC_FACE_QUALITY_", env_file=".env", extra="ignore")
+
+    detector_model: str = "buffalo_l_det_10g.onnx"
+    landmark_model: str = "buffalo_l_2d106det.onnx"
+    detector_conf: float = 0.5
+    min_image_side: int = Field(240, description="Frames smaller than this on the short side are rejected")
+
+    # --- framing -------------------------------------------------------
+    min_face_height_ratio: float = Field(0.20, description="Face box height / frame height floor")
+    max_face_height_ratio: float = Field(0.80, description="Face box height / frame height ceiling")
+    max_center_offset: float = Field(
+        0.25, description="Face centre distance from frame centre, as a fraction of frame size"
+    )
+    # A second face counts only if it is at least this fraction of the main
+    # face's height - a poster far behind the user should not block capture.
+    multiple_face_min_ratio: float = 0.35
+    # Largest box scale (face box enlarged about its centre) that still fits
+    # in the frame. Anti-spoof's MiniFASNet models look at the face at 2.7x
+    # and 4.0x context; a close-up leaves no room for that. 0 disables the
+    # check until spec 04 measures how much context it really needs.
+    min_context_scale: float = 0.0
+
+    # --- image quality on the face crop --------------------------------
+    # Laplacian variance on the face crop resized to 256x256, so the number
+    # does not depend on camera resolution. Test photos: 10-573 sharp, 3-47
+    # after a sigma=3 blur - the ranges overlap; webcam calibration needed.
+    min_sharpness: float = 12.0
+    min_brightness: float = Field(50.0, description="Mean luma floor on the face crop (0-255)")
+    max_brightness: float = Field(210.0, description="Mean luma ceiling on the face crop (0-255)")
+    max_illumination_asymmetry: float = Field(
+        0.5, description="|left half - right half| / mean luma on the face crop; above this is reported (info)"
+    )
+
+    # --- pose and eyes -------------------------------------------------
+    # Normal test photos measured yaw -9..+9, pitch -19..+15, roll -6..+4
+    # (one deliberately tilted photo: roll -21).
+    max_yaw_deg: float = 20.0
+    max_pitch_deg: float = 25.0
+    max_roll_deg: float = 15.0
+    # Eye aspect ratio; open eyes measured 0.24-0.35 on the test photos. No
+    # closed-eye samples yet - the floor is the usual EAR rule of thumb.
+    min_eye_openness: float = 0.15
+
+    # --- session -------------------------------------------------------
+    frames_required_ok: int = Field(2, description="Consecutive passing frames before the selfie is captured")
+    session_ttl_s: int = 120
+    max_frames_per_session: int = 600
+    selfie_jpeg_quality: int = 95
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="KYC_", env_file=".env", extra="ignore")
 
@@ -93,6 +152,7 @@ class Settings(BaseSettings):
     max_upload_bytes: int = 12 * 1024 * 1024
 
     ocr: OcrSettings = Field(default_factory=OcrSettings)
+    face_quality: FaceQualitySettings = Field(default_factory=FaceQualitySettings)
 
     def model_path(self, name: str) -> Path:
         return self.models_dir / name

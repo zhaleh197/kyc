@@ -136,6 +136,11 @@ Config: `accept_above`, `reject_below`, `max_disagreement`, `min_face_px`,
    as real, anything else as fake.
 2. A different detector's boxes (SCRFD/YuNet vs RetinaFace) shift the scaled
    crops enough to change scores. Compare scores on 50 frames with both.
+   **Finding from 02 (2026-10-06):** a normal selfie (face ~35% of frame
+   height) leaves room for only ~2× context, so the 2.7× and 4.0× crops are
+   clamped on typical frames, not rare ones. Measure scores at the clamped
+   context before deciding whether capture must push the user back
+   (`KYC_FACE_QUALITY_MIN_CONTEXT_SCALE`).
 3. Browser JPEG compression (`canvas.toBlob` default quality) removes the
    texture cues these models use. Measure BPCER on frames from that path; if
    it's bad, raise the client's JPEG quality before touching the model.

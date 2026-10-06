@@ -173,3 +173,55 @@ artifacts:
       crnn_fa_text.onnx's fix too.
     sha256: 138e8dc7c07535afd7fa078ccab80a3e1aa8b004c2b1023d564a3ca4bc0c94c8
     exported_at: "2026-09-14"
+
+  # ------------------------------------------------------------------ face
+  # buffalo_l (InsightFace model pack v0.7), downloaded 2026-10-06 from
+  # https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip
+  # zip sha256 80ffe37d8a5940d59a7384c201a2a38d4741f2f3c51eef46ebb28218a7b0ca2f
+  # Not trained here - used as published.
+  #
+  # LICENSE: InsightFace's model zoo states "ALL models are available for
+  # non-commercial research purposes only." This project is commercial. Kept
+  # by decision of 2026-10-06; the licence question is deferred and MUST be
+  # settled before commercial launch (specs/03-face-match.md §5).
+
+  - name: buffalo_l_det_10g.onnx
+    module: face_quality (shared with face_match, antispoof)
+    task: face detection + 5 keypoints (SCRFD-10GF)
+    source: buffalo_l/det_10g.onnx, unchanged
+    license: non-commercial research only (InsightFace) - see note above
+    input: 1x3x640x640 fixed, RGB, (x - 127.5) / 128, aspect-preserving resize into the top-left corner
+    sha256: 5838f7fe053675b1c7a08b633df49e7af5495cee0493c7dcf6697200b85b5b91
+    validation:
+      note: >
+        Smoke-checked on the 15 jpg test photos in phase1_facedetect/testPic
+        and phase2_facematch/testimages: one face found in every photo
+        (score 0.64-0.92). Not a benchmark.
+      cpu_latency_ms: "~220-290 per frame on the dev machine (no AVX2) - over spec 02's proposed 150 ms; re-measure on the target server"
+    known_limitations: >
+      The fixed 640x640 input is the main cost; buffalo_s's det_500m is the
+      smaller alternative if latency on the target CPU is a problem.
+
+  - name: buffalo_l_2d106det.onnx
+    module: face_quality
+    task: 106-point 2D landmarks (eyes for openness)
+    source: buffalo_l/2d106det.onnx, unchanged
+    license: non-commercial research only (InsightFace) - see note above
+    input: >
+      1x3x192x192 RGB, RAW 0-255 pixels - the graph normalises internally
+      (it starts with Sub/Mul nodes); crop = face box x1.5 about its centre
+    sha256: f001b856447c413801ef5c42091ed0cd516fcd21f2d6b79635b1e733a7109dbf
+    validation:
+      note: >
+        Points rendered on a test photo and checked by eye; eye indices
+        (corners 35/39 and 89/93, lids 41-36, 40-33, 42-37 and 95-90,
+        94-87, 96-91) read off that render. Open-eye EAR measured 0.24-0.35
+        on the 15 test photos. No closed-eye samples yet.
+
+  - name: buffalo_l_w600k_r50.onnx
+    module: face_match (not used yet)
+    task: ArcFace R50 face embedding, 512-d
+    source: buffalo_l/w600k_r50.onnx, unchanged
+    license: non-commercial research only (InsightFace) - see note above
+    input: 1x3x112x112 RGB aligned to the ArcFace 5-point template, (x - 127.5) / 127.5
+    sha256: 4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43
