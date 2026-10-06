@@ -1,11 +1,12 @@
-"""Face geometry from landmarks: head pose and eye openness.
+"""Face geometry from landmarks: head pose, eyes, mouth, gaze.
 
-Pure numpy, no model, so every function here is unit-testable with
+Numpy/OpenCV only, no model, so every function here is unit-testable with
 hand-made points.
 """
 
 from __future__ import annotations
 
+import cv2
 import numpy as np
 
 # 2d106det indices, read off a rendered face (image left = the person's right).
@@ -94,3 +95,60 @@ def head_pose(kps: np.ndarray) -> tuple[float, float, float]:
     # Nose nearer the mouth (q up) means the head is tilted down.
     pitch = -float(np.degrees(np.arctan(tan_p)))
     return yaw, pitch, roll
+
+
+# ------------------------------------------------------------------ mouth
+
+# 2d106det mouth: corners, then inner upper-lip / inner lower-lip pairs.
+MOUTH = {"corners": (52, 61), "pairs": ((66, 54), (62, 60), (70, 57))}
+
+
+def mouth_openness(points: np.ndarray) -> float:
+    """Inner-lip gap over mouth width. Near 0 closed; grows as the mouth opens."""
+    c1, c2 = MOUTH["corners"]
+    width = float(np.linalg.norm(points[c1] - points[c2]))
+    if width <= 1e-6:
+        return 0.0
+    gap = np.mean([np.linalg.norm(points[a] - points[b]) for a, b in MOUTH["pairs"]])
+    return float(gap / width)
+
+
+# ------------------------------------------------------------------ gaze
+
+# Eye outlines (corner, upper lid, corner, lower lid) for iris localisation.
+EYE_OUTLINES = (
+    ((35, 39), (35, 41, 40, 42, 39, 37, 33, 36)),
+    ((89, 93), (89, 95, 94, 96, 93, 91, 87, 90)),
+)
+
+
+def iris_offsets(gray: np.ndarray, points: np.ndarray, dark_fraction: float = 0.25) -> list[float]:
+    """Horizontal iris position in each eye: 0 = centred, +-0.5 = at a corner.
+
+    2d106det's "pupil" points (38, 88) do NOT follow the iris - moving the iris
+    in a photo by 0.2 eye-widths left them where they were - so the iris is
+    located directly: the centroid of the darkest `dark_fraction` of pixels
+    inside the eye outline. On the same synthetic test this tracked the move
+    (+-0.13 for +-0.2). Vertical gaze is not estimated; eyelids dominate it.
+    """
+    out: list[float] = []
+    for (c1, c2), outline in EYE_OUTLINES:
+        x0, y0 = np.floor(points[list(outline)].min(0)).astype(int)
+        x1, y1 = np.ceil(points[list(outline)].max(0)).astype(int) + 1
+        x0, y0 = max(0, x0), max(0, y0)
+        region = gray[y0:y1, x0:x1]
+        if region.size == 0:
+            continue
+        mask = np.zeros(region.shape, np.uint8)
+        cv2.fillPoly(mask, [(points[list(outline)] - [x0, y0]).astype(np.int32)], 255)
+        values = region[mask > 0]
+        if values.size < 20:
+            continue
+        ys, xs = np.nonzero((mask > 0) & (region <= np.quantile(values, dark_fraction)))
+        centre = np.array([xs.mean() + x0, ys.mean() + y0])
+        a, b = points[c1], points[c2]
+        width = float(np.linalg.norm(b - a))
+        if width <= 1e-6:
+            continue
+        out.append(float(np.dot(centre - (a + b) / 2, (b - a) / width) / width))
+    return out

@@ -15,8 +15,8 @@ import numpy as np
 
 from kyc.core.config import FaceQualitySettings
 from kyc.core.face.detector import Face
-from kyc.core.face.geometry import eye_openness, head_pose
-from kyc.core.schemas import Reason
+from kyc.core.face.geometry import eye_openness, head_pose, iris_offsets, mouth_openness
+from kyc.core.schemas import Reason, Severity
 
 CROP_SIZE = 256
 
@@ -54,13 +54,38 @@ def face_crop_gray(img: np.ndarray, face: Face) -> np.ndarray:
     return cv2.resize(gray, (CROP_SIZE, CROP_SIZE), interpolation=cv2.INTER_AREA)
 
 
+def background_edge_density(img: np.ndarray, face: Face) -> tuple[float, float]:
+    """(edge density, fraction of frame used) on the background beside and
+    above the head, at most down to chin level so the torso is excluded.
+
+    Model-free approximation of the prototype's rembg/u2netp segmentation:
+    the head box is widened generously for hair and headscarves and cut out.
+    """
+    scale = 640 / max(img.shape[:2])
+    gray = cv2.cvtColor(cv2.resize(img, None, fx=scale, fy=scale), cv2.COLOR_BGR2GRAY)
+    h, w = gray.shape
+    x1, y1, x2, y2 = (v * scale for v in face.box)
+    fw, fh = x2 - x1, y2 - y1
+    chin = int(min(h, y2))
+    mask = np.zeros((h, w), bool)
+    mask[:chin, :] = True
+    mask[int(max(0, y1 - 0.6 * fh)) : chin, int(max(0, x1 - 0.45 * fw)) : int(min(w, x2 + 0.45 * fw))] = False
+    fraction = float(mask.mean())
+    if not mask.any():
+        return 0.0, 0.0
+    edges = cv2.Canny(cv2.GaussianBlur(gray, (5, 5), 0), 40, 120) > 0
+    return float(edges[mask].mean()), fraction
+
+
 def assess(
     img: np.ndarray,
     faces: list[Face],
     landmarks: np.ndarray | None,
     cfg: FaceQualitySettings,
+    clear_logit: float | None = None,
 ) -> FrameAssessment:
-    """`faces` largest first; `landmarks` are the 106 points of faces[0]."""
+    """`faces` largest first; `landmarks` are the 106 points of faces[0];
+    `clear_logit` is the occlusion classifier's output for faces[0], if run."""
     out = FrameAssessment()
     h, w = img.shape[:2]
 
@@ -139,6 +164,46 @@ def assess(
         m["eye_openness_left"], m["eye_openness_right"] = round(left_eye, 4), round(right_eye, 4)
         if min(left_eye, right_eye) < cfg.min_eye_openness:
             out.reasons.append(_err("eyes_closed", "Eyes are closed", "چشم‌هایتان را باز نگه دارید"))
+
+        m["mouth_openness"] = round(mouth_openness(landmarks), 4)
+        if m["mouth_openness"] > cfg.max_mouth_openness:
+            out.reasons.append(_err("mouth_open", "Mouth is open", "دهانتان را ببندید"))
+
+        offsets = iris_offsets(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), landmarks)
+        if offsets:
+            m["gaze_offset"] = round(float(np.mean(offsets)), 4)
+            # Only meaningful with the head roughly frontal; a turned head
+            # already has its own hint.
+            if abs(m["gaze_offset"]) > cfg.max_gaze_offset and abs(yaw) <= cfg.max_yaw_deg:
+                out.reasons.append(_err("gaze_off_center", "Not looking at the camera", "مستقیم به دوربین نگاه کنید"))
+
+    # --- occlusion
+    if clear_logit is not None:
+        m["clear_logit"] = round(clear_logit, 3)
+        if clear_logit < cfg.min_clear_logit:
+            out.reasons.append(
+                _err(
+                    "face_occluded",
+                    "Something is covering the face",
+                    "ماسک، عینک آفتابی یا دست را از جلوی صورت بردارید",
+                )
+            )
+
+    # --- background
+    if cfg.background_check != "off":
+        density, fraction = background_edge_density(img, face)
+        m["background_fraction"] = round(fraction, 3)
+        if fraction >= cfg.min_background_fraction:
+            m["background_edge_density"] = round(density, 4)
+            if density > cfg.max_background_edge_density:
+                out.reasons.append(
+                    Reason(
+                        code="background_not_uniform",
+                        severity=Severity(cfg.background_check),
+                        message_en="Background is not plain",
+                        message_fa="پس‌زمینه یکدست نیست؛ جلوی دیوار ساده بایستید",
+                    )
+                )
 
     return out
 

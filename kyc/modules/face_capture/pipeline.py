@@ -1,10 +1,16 @@
-"""Face capture: a guided loop that ends with a server-held selfie.
+"""Face capture: a guided camera session that ends with a server-held selfie.
 
-    frame -> detect faces -> 106 landmarks -> per-frame checks -> hints
-          -> N consecutive passing frames -> keep the best -> capture_id
+    stream frames -> detect -> landmarks -> occlusion -> checks -> hints
+        -> N consecutive passing frames      (state READY_FOR_STILL)
+    still photo   -> the same checks + same person as the stream
+        -> stored server-side -> capture_id  (state CAPTURED)
 
-Detector and landmarker are injectable, as in the OCR pipeline, so the suite
-runs without model weights or real faces.
+Video frames give live guidance; the still, taken from the same camera once
+the stream qualifies, gives face match a higher-resolution selfie than a
+video frame. With `require_still=false` the best stream frame is kept instead.
+
+Every model is injectable, as in the OCR pipeline, so the suite runs without
+weights or real faces.
 """
 
 from __future__ import annotations
@@ -19,17 +25,17 @@ import numpy as np
 from kyc.core.config import Settings, get_settings
 from kyc.core.errors import ImageQualityError, InvalidInput
 from kyc.core.face.detector import Face, FaceDetector
+from kyc.core.face.embedder import FaceEmbedder, cosine
 from kyc.core.face.landmarks import Landmarker
+from kyc.core.face.occlusion import OcclusionClassifier
+from kyc.core.imaging import limit_size
 from kyc.core.schemas import Decision, ModuleResult, Reason, Severity, Timer
 
 from . import quality
 from .session import Capture, CaptureSession, CaptureState, CaptureStore
 
 MODULE_NAME = "face_quality"
-MODULE_VERSION = "0.1.0"
-
-DetectorFactory = Callable[[], "FaceDetector"]
-LandmarkerFactory = Callable[[], "Landmarker"]
+MODULE_VERSION = "0.2.0"
 
 
 class SessionNotFound(InvalidInput):
@@ -47,29 +53,31 @@ class FaceCapturePipeline:
         self,
         settings: Settings | None = None,
         *,
-        detector_factory: DetectorFactory | None = None,
-        landmarker_factory: LandmarkerFactory | None = None,
+        detector_factory: Callable[[], FaceDetector] | None = None,
+        landmarker_factory: Callable[[], Landmarker] | None = None,
+        occlusion_factory: Callable[[], OcclusionClassifier] | None = None,
+        embedder_factory: Callable[[], FaceEmbedder] | None = None,
         store: CaptureStore | None = None,
     ):
         self.settings = settings or get_settings()
         cfg = self.settings.face_quality
-        self._detector_factory = detector_factory or self._default_detector
-        self._landmarker_factory = landmarker_factory or self._default_landmarker
-        self._detector: FaceDetector | None = None
-        self._landmarker: Landmarker | None = None
+        self._factories = {
+            "detector": detector_factory or (lambda: self._load(FaceDetector, cfg.detector_model)),
+            "landmarker": landmarker_factory or (lambda: self._load(Landmarker, cfg.landmark_model)),
+            "occlusion": occlusion_factory or (lambda: self._load(OcclusionClassifier, cfg.occlusion_model)),
+            "embedder": embedder_factory or (lambda: self._load(FaceEmbedder, cfg.embedding_model)),
+        }
+        self._models: dict[str, object] = {}
         self.store = store or CaptureStore(cfg.session_ttl_s)
 
-    def _default_detector(self) -> FaceDetector:
+    def _load(self, cls, filename: str):
         s = self.settings
-        return FaceDetector.load(
-            s.model_path(s.face_quality.detector_model), s.onnx_providers, s.onnx_intra_threads
-        )
+        return cls.load(s.model_path(filename), s.onnx_providers, s.onnx_intra_threads)
 
-    def _default_landmarker(self) -> Landmarker:
-        s = self.settings
-        return Landmarker.load(
-            s.model_path(s.face_quality.landmark_model), s.onnx_providers, s.onnx_intra_threads
-        )
+    def _model(self, name: str):
+        if name not in self._models:
+            self._models[name] = self._factories[name]()
+        return self._models[name]
 
     # ---------------------------------------------------------------- analysis
 
@@ -81,24 +89,20 @@ class FaceCapturePipeline:
                 f"Frame is too small ({w}x{h}); the short side must be at least {cfg.min_image_side}px",
                 details={"width": w, "height": h},
             )
-        if self._detector is None:
-            self._detector = self._detector_factory()
-        faces: list[Face] = self._detector.detect(image, cfg.detector_conf)
-        landmarks = None
+        faces: list[Face] = self._model("detector").detect(image, cfg.detector_conf)
+        landmarks = clear_logit = None
         if faces:
-            if self._landmarker is None:
-                self._landmarker = self._landmarker_factory()
-            landmarks = self._landmarker.landmarks(image, faces[0])
-        return quality.assess(image, faces, landmarks, cfg)
+            landmarks = self._model("landmarker").landmarks(image, faces[0])
+            clear_logit = self._model("occlusion").clear_logit(image, faces[0])
+        return quality.assess(image, faces, landmarks, cfg, clear_logit)
 
     def check(self, image: np.ndarray) -> ModuleResult:
         """Stateless single-image check (back-office use). Never yields a capture_id."""
         with Timer() as timer:
             a = self.assess(image)
-            decision = _decision(a.reasons)
             score = quality.quality_score(a.metrics, self.settings.face_quality) if a.face else 0.0
             data = {"metrics": a.metrics, "face_box": _box(a.face), "landmarks_5": _kps(a.face)}
-        return _envelope(decision, score, a.reasons, data, timer)
+        return _envelope(_decision(a.reasons), score, a.reasons, data, timer)
 
     # ---------------------------------------------------------------- sessions
 
@@ -106,38 +110,72 @@ class FaceCapturePipeline:
         return self.store.create()
 
     def submit_frame(self, session_id: str, image: np.ndarray) -> dict:
+        """One video frame. Gives hints; qualifies the stream for the still."""
         cfg = self.settings.face_quality
         session = self._session(session_id)
         with session.lock:
-            if session.state is CaptureState.SEARCHING and session.expired():
-                session.state = CaptureState.EXPIRED
-            if session.state is not CaptureState.SEARCHING:
-                raise SessionClosed(f"Capture session is {session.state.value.lower()}")
-            session.frames_seen += 1
-            if session.frames_seen > cfg.max_frames_per_session:
-                session.state = CaptureState.EXPIRED
-                raise SessionClosed("Too many frames in this capture session")
-
+            self._accept_input(session, (CaptureState.SEARCHING, CaptureState.READY_FOR_STILL))
             a = self.assess(image)
             session.last_hints = a.reasons
+            if session.state is CaptureState.READY_FOR_STILL:
+                # Keep guiding while the client takes the still; qualification stands.
+                return self._feedback(session, a.reasons)
+
             if a.ok:
                 session.ok_streak += 1
                 score = quality.quality_score(a.metrics, cfg)
                 if session.candidate is None or score > session.candidate[0]:
-                    session.candidate = (score, _jpeg(image, cfg.selfie_jpeg_quality), a)
+                    session.candidate = (score, _jpeg(image, cfg.selfie_jpeg_quality), a, image)
                 if session.ok_streak >= cfg.frames_required_ok:
-                    self._capture(session)
+                    if cfg.require_still:
+                        _, _, best, best_image = session.candidate
+                        session.stream_embedding = self._model("embedder").embed(best_image, best.face)
+                        session.state = CaptureState.READY_FOR_STILL
+                    else:
+                        score, jpeg, best, _ = session.candidate
+                        self._capture(session, jpeg, best, score)
             else:
                 session.ok_streak = 0
                 session.candidate = None
             return self._feedback(session, a.reasons)
 
+    def submit_still(self, session_id: str, image: np.ndarray) -> dict:
+        """The selfie itself: a still photo from the same camera, after the stream qualified."""
+        cfg = self.settings.face_quality
+        session = self._session(session_id)
+        with session.lock:
+            self._accept_input(session, (CaptureState.READY_FOR_STILL,))
+            image = limit_size(image, cfg.max_still_side)
+            a = self.assess(image)
+            if a.face is not None and a.ok:
+                similarity = cosine(session.stream_embedding, self._model("embedder").embed(image, a.face))
+                a.metrics["still_similarity"] = round(similarity, 4)
+                if similarity < cfg.min_still_similarity:
+                    a.reasons.append(
+                        Reason.error(
+                            "still_face_mismatch",
+                            "The photo does not show the same person as the video",
+                            "عکس با تصویر ویدیو مطابقت ندارد؛ دوباره تلاش کنید",
+                        )
+                    )
+            session.last_hints = a.reasons
+            if a.ok:
+                score = quality.quality_score(a.metrics, cfg)
+                self._capture(session, _jpeg(image, cfg.selfie_jpeg_quality), a, score)
+            else:
+                # Back to the stream: the user must re-qualify before another still.
+                session.stills_rejected += 1
+                session.state = CaptureState.SEARCHING
+                session.ok_streak = 0
+                session.candidate = None
+                session.stream_embedding = None
+            return self._feedback(session, a.reasons)
+
     def result(self, session_id: str, *, include_selfie: bool = False) -> ModuleResult:
         session = self._session(session_id)
         with session.lock, Timer() as timer:
-            if session.state is CaptureState.SEARCHING and session.expired():
-                session.state = CaptureState.EXPIRED
-            if session.state is CaptureState.SEARCHING:
+            self._expire_if_due(session)
+            if session.state in (CaptureState.SEARCHING, CaptureState.READY_FOR_STILL):
                 raise SessionClosed("Capture session has not finished yet")
             if session.state is CaptureState.EXPIRED:
                 reasons = [
@@ -147,8 +185,12 @@ class FaceCapturePipeline:
                         "در زمان مقرر عکس قابل‌قبولی گرفته نشد؛ دوباره تلاش کنید",
                     )
                 ]
-                data = {"capture_id": None, "frames_seen": session.frames_seen,
-                        "last_hints": [r.code for r in session.last_hints]}
+                data = {
+                    "capture_id": None,
+                    "frames_seen": session.frames_seen,
+                    "stills_rejected": session.stills_rejected,
+                    "last_hints": [r.code for r in session.last_hints],
+                }
                 return _envelope(Decision.FAIL, 0.0, reasons, data, timer)
 
             capture = self.store.get_capture(session.capture_id)
@@ -156,11 +198,13 @@ class FaceCapturePipeline:
                 raise SessionClosed("The captured selfie has expired")
             data = {
                 "capture_id": capture.capture_id,
+                "source": "still" if self.settings.face_quality.require_still else "stream",
                 "face_box": list(capture.face_box),
                 "landmarks_5": capture.kps.tolist(),
                 "metrics": capture.metrics,
                 "frames_seen": session.frames_seen,
-                "selfie_base64": _b64(capture.jpeg) if include_selfie else None,
+                "stills_rejected": session.stills_rejected,
+                "selfie_base64": base64.b64encode(capture.jpeg).decode("ascii") if include_selfie else None,
             }
             return _envelope(_decision(capture.warnings), capture.score, capture.warnings, data, timer)
 
@@ -176,8 +220,22 @@ class FaceCapturePipeline:
             raise SessionNotFound("Unknown or expired capture session")
         return session
 
-    def _capture(self, session: CaptureSession) -> None:
-        score, jpeg, a = session.candidate
+    @staticmethod
+    def _expire_if_due(session: CaptureSession) -> None:
+        open_states = (CaptureState.SEARCHING, CaptureState.READY_FOR_STILL)
+        if session.state in open_states and session.expired():
+            session.state = CaptureState.EXPIRED
+
+    def _accept_input(self, session: CaptureSession, allowed: tuple[CaptureState, ...]) -> None:
+        self._expire_if_due(session)
+        if session.state not in allowed:
+            raise SessionClosed(f"Capture session is {session.state.value.lower()}")
+        session.frames_seen += 1
+        if session.frames_seen > self.settings.face_quality.max_frames_per_session:
+            session.state = CaptureState.EXPIRED
+            raise SessionClosed("Too many frames in this capture session")
+
+    def _capture(self, session: CaptureSession, jpeg: bytes, a: quality.FrameAssessment, score: float) -> None:
         capture = Capture(
             capture_id=self.store.new_capture_id(),
             session_id=session.session_id,
@@ -193,13 +251,16 @@ class FaceCapturePipeline:
         session.capture_id = capture.capture_id
         session.state = CaptureState.CAPTURED
         session.candidate = None
+        session.stream_embedding = None
 
     @staticmethod
     def _feedback(session: CaptureSession, reasons: list[Reason]) -> dict:
         return {
             "state": session.state.value,
-            "hints": [{"code": r.code, "severity": r.severity.value, "message_fa": r.message_fa,
-                       "message_en": r.message_en} for r in reasons],
+            "hints": [
+                {"code": r.code, "severity": r.severity.value, "message_fa": r.message_fa, "message_en": r.message_en}
+                for r in reasons
+            ],
             "capture_id": session.capture_id,
             "frames_seen": session.frames_seen,
             "expires_in_s": max(0.0, round(session.expires_at - time.time(), 1)),
@@ -233,10 +294,6 @@ def _jpeg(image: np.ndarray, quality_: int) -> bytes:
     if not ok:
         raise InvalidInput("JPEG encoding failed")
     return buf.tobytes()
-
-
-def _b64(data: bytes) -> str:
-    return base64.b64encode(data).decode("ascii")
 
 
 def _box(face: Face | None) -> list[float] | None:

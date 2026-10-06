@@ -4,9 +4,10 @@ Status: **up-front spec**. Prototype: `phase1_facedetect/final.py` (Flask) +
 `templates/final.html`. A single-image variant exists in
 `phase1_facedetect/claude_api/main.py` (`/kyc/face-quality`).
 
-**Implementation (2026-10-06, branch `face-capture`)**: `kyc/modules/face_capture/`
-+ shared runners in `kyc/core/face/`. Sessions, capture_id, all checks below
-except occlusion and gaze. See §12 for what was measured while building it.
+**Implementation (branch `face-capture`)**: `kyc/modules/face_capture/` +
+shared runners in `kyc/core/face/`. 2026-10-06: sessions, capture_id, core
+checks. 2026-10-07: still-photo step, mouth, gaze, occlusion, background. See
+§12 for what was measured while building it.
 
 ## 1. Purpose
 
@@ -39,6 +40,26 @@ no upload button in the UI and no endpoint that accepts a selfie file. The only
 way a selfie enters the system is a frame sent into a capture session from the
 camera.
 
+### Video first, then a still photo — both from the same camera (decided 2026-10-07)
+
+The user does not choose between "photo" and "video": offering a choice lets
+an attacker pick the weaker path. One session does both, in order:
+
+1. **Video** — frames stream in, each gets hints; `frames_required_ok`
+   consecutive passing frames qualify the stream (`READY_FOR_STILL`).
+2. **Still** — the client then takes a full-resolution photo from the same
+   camera (`ImageCapture.takePhoto()` where available, otherwise the largest
+   frame the stream offers) and sends it to the same session. It must pass
+   the same checks **and** show the same person as the stream (ArcFace
+   cosine ≥ `min_still_similarity`). That still is the selfie.
+3. **Liveness** (05) continues on the same stream.
+
+Why both: video gives live guidance and is what liveness/anti-spoof need; a
+still gives face match a sharper, higher-resolution selfie than a compressed
+720p video frame. A rejected still sends the user back to step 1.
+`require_still=false` keeps the best video frame instead, for clients that
+can't take stills.
+
 Removing the button is not the protection by itself: the API can be called
 directly (curl, a script) without the page. What enforces it is the server
 side — frames are accepted only inside an open capture session, and 03/04/07
@@ -46,29 +67,40 @@ accept only a `capture_id`. The remaining route, feeding a photo or video
 through a *virtual camera*, is handled by liveness (05) and injection
 detection (06b).
 
-## 3. Scope
+## 3. Scope — the checks, and what each tells the user
 
-Checks on each frame (all measured on the **face crop**, not the whole frame —
-OCR's whole-frame sharpness is the mistake not to repeat, 01 §9.3):
+All measured on the **face**, not the whole frame (OCR's whole-frame
+sharpness is the mistake not to repeat, 01 §9.3). The team's requirement list
+(2026-10-07) mapped to checks:
 
-- exactly one face (§11 for the "largest + warn" alternative)
-- face size and position — including a margin large enough for 04's crop
-  (MiniFASNet's 4.0× box must fit inside the frame; see 04 §4.2)
-- sharpness, brightness, lighting asymmetry across the face
-- head pose (yaw / pitch / roll) within limits
-- eyes open, gaze roughly forward
-- occlusion: mask, sunglasses, hand, hair over eyes
+| Requirement | Check | How | Blocks capture? |
+|---|---|---|---|
+| Blurry / too dark / too bright | `face_blurry`, `face_too_dark`, `face_too_bright` | Laplacian variance and mean luma on the face crop resized to 256² | yes |
+| Too far / too close | `face_too_small`, `face_too_large`, `face_off_center`, `face_cut_off` | face box vs frame | yes |
+| Eyes open | `eyes_closed` | eye aspect ratio from 106 landmarks | yes |
+| Mouth closed | `mouth_open` | inner-lip gap / mouth width from 106 landmarks | yes |
+| Nothing covering the face | `face_occluded` | the prototype's MobileNetV3, exported to ONNX — **confident cases only**, see §12 | yes |
+| Looking straight at the camera | `gaze_off_center` | iris located as the darkest region inside each eye outline (horizontal only) | yes |
+| Head straight, not up/down/turned/tilted | `head_turned` (yaw, pitch), `head_tilted` (roll) | closed-form pose from 5 keypoints | yes |
+| Plain background | `background_not_uniform` | edge density beside/above the head | **configurable** (`background_check`: off / info / warn / error; default info = hint shown, not blocking) |
+| Only one person | `multiple_faces` | second face ≥ 35% of the main face's height | yes |
+| Light even across the face | `uneven_lighting` | left/right luma asymmetry | no (info) |
+
+Why background is not blocking by default: plain walls measured edge density
+0–0.004, ordinary rooms 0.02–0.17 — almost every selfie at home would be
+refused. Set `KYC_FACE_QUALITY_BACKGROUND_CHECK=error` where a passport-style
+photo is actually required.
 
 Non-goals: spoof detection (04), identity (03), ISO/IEC 19794-5 conformance
-(criteria borrowed, compliance not claimed), background uniformity (a
-passport-photo rule; the prototype checks it — drop unless a client needs it).
+(criteria borrowed, compliance not claimed).
 
 ## 4. Interfaces
 
 | Method | Path | |
 |---|---|---|
 | POST | `/v1/face-capture/sessions` | start; returns `session_id`, `expires_at` |
-| POST | `/v1/face-capture/sessions/{id}/frames` | one frame → feedback |
+| POST | `/v1/face-capture/sessions/{id}/frames` | one video frame → feedback (also `/frames/base64`) |
+| POST | `/v1/face-capture/sessions/{id}/still` | the still photo, only in `READY_FOR_STILL` (also `/still/base64`) |
 | GET | `/v1/face-capture/sessions/{id}/result` | terminal `ModuleResult` incl. `capture_id` |
 | POST | `/v1/face-quality/check` | stateless single-image check for back-office tools only (operator auth); never produces a `capture_id`, so its output can't reach face match |
 
@@ -76,15 +108,15 @@ Frame response (feedback, not a `ModuleResult`):
 
 ```json
 {
-  "state": "SEARCHING | CAPTURED | EXPIRED",
+  "state": "SEARCHING | READY_FOR_STILL | CAPTURED | EXPIRED",
   "hints": [{"code": "face_too_small", "message_fa": "نزدیک‌تر بیایید"}],
   "capture_id": null
 }
 ```
 
-`state` becomes `CAPTURED` after `frames_required_ok` consecutive passing
-frames (proposed 2 — one lucky frame shouldn't pass); the best of those is
-stored.
+`state` becomes `READY_FOR_STILL` after `frames_required_ok` consecutive
+passing frames (2 — one lucky frame shouldn't qualify), then `CAPTURED` when
+an accepted still arrives.
 
 Result `data`:
 
@@ -97,9 +129,12 @@ Result `data`:
     "face_height_ratio": 0.0, "sharpness": 0.0, "brightness": 0.0,
     "illumination_asymmetry": 0.0, "yaw": 0.0, "pitch": 0.0, "roll": 0.0,
     "eye_openness_left": 0.0, "eye_openness_right": 0.0,
-    "occlusion": {"mask": 0.0, "sunglasses": 0.0, "other": 0.0}
+    "mouth_openness": 0.0, "gaze_offset": 0.0, "clear_logit": 0.0,
+    "background_edge_density": 0.0, "still_similarity": 0.0
   },
+  "source": "still | stream",
   "frames_seen": 0,
+  "stills_rejected": 0,
   "selfie_base64": null
 }
 ```
@@ -107,22 +142,25 @@ Result `data`:
 Box and landmarks are returned so 03/04 reuse this detection instead of
 detecting again.
 
-### Reason / hint codes (proposed)
+### Reason / hint codes
 
-| code | sev | hint to the user |
+| code | sev | hint to the user (fa) |
 |---|---|---|
-| `no_face` | error | face the camera |
-| `multiple_faces` | error (§11) | only you in the frame |
-| `face_too_small` / `face_too_large` | error | move closer / further |
-| `face_off_center` / `face_cut_off` | error | center your face |
-| `face_blurry` | error | hold still |
-| `face_too_dark` / `face_too_bright` | error | lighting |
-| `uneven_lighting` | warn | face the light |
-| `head_turned` / `head_tilted` | error | look straight |
-| `eyes_closed` | error | open your eyes |
-| `gaze_off_center` | warn | look at the camera |
-| `face_occluded_mask` / `_sunglasses` / `_other` | error | remove it |
-| `capture_timeout` | error (terminal) | session ended without a usable frame |
+| `no_face` | error | چهره پیدا نشد؛ رو به دوربین قرار بگیرید |
+| `multiple_faces` | error | فقط خودتان در کادر باشید |
+| `face_too_small` / `face_too_large` | error | نزدیک‌تر بیایید / کمی عقب‌تر بروید |
+| `face_off_center` / `face_cut_off` | error | صورت را وسط کادر بیاورید / تمام صورت در کادر باشد |
+| `face_blurry` | error | تصویر تار است؛ دوربین را ثابت نگه دارید |
+| `face_too_dark` / `face_too_bright` | error | نور کافی نیست / نور زیاد است |
+| `head_turned` / `head_tilted` | error | مستقیم به دوربین نگاه کنید / سرتان را صاف نگه دارید |
+| `eyes_closed` | error | چشم‌هایتان را باز نگه دارید |
+| `mouth_open` | error | دهانتان را ببندید |
+| `gaze_off_center` | error | مستقیم به دوربین نگاه کنید |
+| `face_occluded` | error | ماسک، عینک آفتابی یا دست را از جلوی صورت بردارید |
+| `background_not_uniform` | configurable, default info | پس‌زمینه یکدست نیست؛ جلوی دیوار ساده بایستید |
+| `uneven_lighting` | info | نور یکنواخت نیست؛ رو به نور بایستید |
+| `still_face_mismatch` | error (still only) | عکس با تصویر ویدیو مطابقت ندارد |
+| `capture_timeout` | error (terminal) | در زمان مقرر عکس قابل‌قبولی گرفته نشد |
 
 ## 5. Decision rules
 
@@ -169,6 +207,7 @@ lighting std 20; client sends 1 frame/s.
 | Q6 | Thresholds calibrated on face crops from the real browser capture path, recorded in config comments | TBD |
 | Q7 | Per-frame p95 ≤ 150 ms on CPU | proposed |
 | Q8 | No torch / ultralytics / transformers at serving | required |
+| Q9 | Headscarves and beards are never reported as occlusion (false-occlusion rate on them ≤ 1%) | required — the prototype's model fails this at its own threshold, §12 |
 
 ## 9. Assumptions to verify before building
 
@@ -244,5 +283,29 @@ Changes to this spec from what was found:
   Q7's proposed 150 ms. Re-measure on the target server; `det_500m`
   (buffalo_s) is the fallback.
 
-Not built yet: occlusion classifier (needs a trained model — Q5),
-gaze check, multi-worker session store (Redis).
+### 2026-10-07 — still step and the remaining checks
+
+- **Gaze: the 2d106 "pupil" points don't track the iris.** Moving the iris in
+  a photo by 0.2 eye-widths left points 38/88 exactly where they were — they
+  are interpolated eye centres. Replaced by locating the iris directly (darkest
+  25% of pixels inside the eye outline); on the same test it moved ±0.13, and
+  test photos looking at the camera stay within ±0.10. Horizontal only.
+- **Occlusion: the prototype's MobileNetV3 is biased against headscarves and
+  beards.** At its own threshold (logit 0.25) it flagged 5 of 22 uncovered
+  faces — four women in headscarves and a bearded man. Serving uses −3.0:
+  none of the 22 flagged, the one real covered face (−4.28) caught, most
+  synthetic masks missed. It is a stop-gap; Q5 needs a retrained model with
+  headscarves and beards as *uncovered* examples. The prototype's YOLO
+  (`finalbestzh.pt`) and HF ViT were not migrated.
+- **Mouth**: closed mouths 0.004–0.048, a broad smile with teeth 0.124;
+  threshold 0.15. No open-mouth samples yet.
+- **Still ↔ video identity**: ArcFace cosine, same image rescaled 0.99,
+  different people ≈ 0.0–0.3; threshold 0.5. End to end with the real
+  models: a different person's still was rejected (`still_face_mismatch`),
+  the same person's accepted (0.9985).
+- **Latency**: 350–580 ms per frame with all checks on the dev machine (no
+  AVX2). Fine for guidance at the prototype's 1 frame/s; re-measure on the
+  server.
+
+Not built yet: retrained occlusion model (Q5), multi-worker session store
+(Redis), the browser capture page, threshold calibration on webcam frames.

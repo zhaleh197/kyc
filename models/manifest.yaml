@@ -225,3 +225,34 @@ artifacts:
     license: non-commercial research only (InsightFace) - see note above
     input: 1x3x112x112 RGB aligned to the ArcFace 5-point template, (x - 127.5) / 127.5
     sha256: 4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43
+
+  - name: face_occlusion_mnv3.onnx
+    module: face_quality
+    task: face occlusion (mask / hand / sunglasses) - binary, one raw logit, higher = clearer
+    source: >
+      The prototype's phase1_facedetect/obstruction_detector50.pt (torchvision
+      MobileNetV3, 3.46M params, trained by the team - training data and
+      metrics not recorded), exported to ONNX on 2026-10-07 with
+      torch.onnx.export(opset 17). ONNX output equals torch output on every
+      test face (checked to 2 decimals on 23 crops).
+    source_sha256: f4344a34a5ba7221663f02d609eac0e0dcedec9a6e5aedfd29cc32773fb275a0
+    license: team's own model
+    input: 1x3x224x224 RGB face-box crop, ImageNet mean/std normalisation
+    sha256: 29545e2140ad9e990cd7fdc93b27e5f15e699cd4d1e16e23d0135dc4e3d7c60e
+    validation:
+      note: >
+        23 face crops from the repo's test photos (22 uncovered, 1 real
+        scarf-over-mouth) plus synthetic occlusions drawn on each (a grey
+        block over nose+mouth, dark discs over the eyes). Not a benchmark.
+      at_prototype_threshold_0.25: >
+        5 of 22 uncovered faces flagged as covered - four women wearing
+        headscarves and one bearded man. Unusable as a blocking check for
+        this user population.
+      at_serving_threshold_-3.0: >
+        0 of 22 uncovered faces flagged; the real covered face (-4.28)
+        caught; synthetic masks mostly missed, synthetic sunglasses partly
+        caught.
+    known_limitations: >
+      Only catches confident cases. Needs retraining on a set that includes
+      headscarves and beards as NEGATIVES (uncovered), plus masks, hands and
+      sunglasses as positives - spec 02 Q5.

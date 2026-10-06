@@ -21,7 +21,8 @@ import numpy as np
 
 
 class CaptureState(str, Enum):
-    SEARCHING = "SEARCHING"
+    SEARCHING = "SEARCHING"              # streaming; guiding the user into position
+    READY_FOR_STILL = "READY_FOR_STILL"  # stream qualified; waiting for the still photo
     CAPTURED = "CAPTURED"
     EXPIRED = "EXPIRED"
 
@@ -48,8 +49,11 @@ class CaptureSession:
     state: CaptureState = CaptureState.SEARCHING
     frames_seen: int = 0
     ok_streak: int = 0
-    # Best passing frame of the current streak: (score, jpeg, assessment).
+    # Best passing frame of the current streak: (score, jpeg, assessment, image).
     candidate: tuple | None = None
+    # ArcFace embedding of the best qualifying stream frame; the still must match it.
+    stream_embedding: np.ndarray | None = None
+    stills_rejected: int = 0
     capture_id: str | None = None
     last_hints: list = field(default_factory=list)
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)

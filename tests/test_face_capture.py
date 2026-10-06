@@ -17,10 +17,18 @@ from kyc.api.app import app
 from kyc.core.config import FaceQualitySettings, Settings
 from kyc.core.face import detector as det_mod
 from kyc.core.face.detector import Face, FaceDetector
-from kyc.core.face.geometry import EYE_LEFT_IMG, EYE_RIGHT_IMG, eye_openness, head_pose
+from kyc.core.face.geometry import (
+    EYE_LEFT_IMG,
+    EYE_RIGHT_IMG,
+    MOUTH,
+    eye_openness,
+    head_pose,
+    iris_offsets,
+    mouth_openness,
+)
 from kyc.core.schemas import Decision
 from kyc.modules.face_capture.pipeline import FaceCapturePipeline, SessionClosed
-from kyc.modules.face_capture.quality import assess, context_scale
+from kyc.modules.face_capture.quality import assess, background_edge_density, context_scale
 from kyc.modules.face_capture.router import get_pipeline
 
 FRAME_W, FRAME_H = 640, 480
@@ -45,21 +53,34 @@ def make_face(box=(240, 130, 400, 350), kps=None, score=0.9) -> Face:
     return Face(box=tuple(float(v) for v in box), score=score, kps=kps)
 
 
-def landmarks_106(eye_open: float = 0.3) -> np.ndarray:
-    """Only the eye points matter to the checks; place them with a given EAR."""
+EYE_CENTRES = ((290.0, 210.0), (350.0, 210.0))
+
+
+def landmarks_106(eye_open: float = 0.3, mouth_open: float = 0.02) -> np.ndarray:
+    """Only eye and mouth points matter to the checks; place them with a given
+    eye aspect ratio and mouth openness."""
     pts = np.zeros((106, 2), np.float32)
-    for eye, cx in ((EYE_LEFT_IMG, 290.0), (EYE_RIGHT_IMG, 350.0)):
+    for eye, (cx, cy) in zip((EYE_LEFT_IMG, EYE_RIGHT_IMG), EYE_CENTRES, strict=True):
         c1, c2 = eye["corners"]
-        pts[c1], pts[c2] = (cx - 20, 210), (cx + 20, 210)
+        pts[c1], pts[c2] = (cx - 20, cy), (cx + 20, cy)
         for i, (up, down) in enumerate(eye["pairs"]):
             x = cx - 10 + 10 * i
-            pts[up], pts[down] = (x, 210 - 20 * eye_open), (x, 210 + 20 * eye_open)
+            pts[up], pts[down] = (x, cy - 20 * eye_open), (x, cy + 20 * eye_open)
+    c1, c2 = MOUTH["corners"]
+    pts[c1], pts[c2] = (290, 300), (350, 300)
+    for i, (up, down) in enumerate(MOUTH["pairs"]):
+        x = 305 + 15 * i
+        pts[up], pts[down] = (x, 300 - 30 * mouth_open), (x, 300 + 30 * mouth_open)
     return pts
 
 
-def textured_frame(brightness: int = 128, blur: float = 0.0) -> np.ndarray:
+def textured_frame(brightness: int = 128, blur: float = 0.0, iris_shift: float = 0.0) -> np.ndarray:
+    """Random texture (so sharpness reads as a photo) with a dark iris in each
+    eye, shifted by `iris_shift` eye-widths."""
     rng = np.random.default_rng(0)
     frame = rng.integers(brightness - 40, brightness + 40, (FRAME_H, FRAME_W, 3)).astype(np.uint8)
+    for cx, cy in EYE_CENTRES:
+        cv2.circle(frame, (int(cx + 40 * iris_shift), int(cy)), 6, (5, 5, 5), -1)
     if blur:
         frame = cv2.GaussianBlur(frame, (0, 0), blur)
     return frame
@@ -74,18 +95,48 @@ class FakeDetector:
 
 
 class FakeLandmarker:
-    def __init__(self, eye_open=0.3):
+    def __init__(self, eye_open=0.3, mouth_open=0.02):
         self.eye_open = eye_open
+        self.mouth_open = mouth_open
 
     def landmarks(self, image, face):  # noqa: ARG002
-        return landmarks_106(self.eye_open)
+        return landmarks_106(self.eye_open, self.mouth_open)
 
 
-def build(faces=None, eye_open=0.3, **cfg) -> FaceCapturePipeline:
+class FakeOcclusion:
+    def __init__(self, logit=2.0):
+        self.logit = logit
+
+    def clear_logit(self, image, face):  # noqa: ARG002
+        return self.logit
+
+
+class FakeEmbedder:
+    """Returns the scripted vectors in order; the last one repeats."""
+
+    def __init__(self, *vectors):
+        self.vectors = [np.asarray(v, np.float32) for v in (vectors or ([1.0, 0.0],))]
+        self.calls = 0
+
+    def embed(self, image, face):  # noqa: ARG002
+        vec = self.vectors[min(self.calls, len(self.vectors) - 1)]
+        self.calls += 1
+        return vec / np.linalg.norm(vec)
+
+
+def build(faces=None, eye_open=0.3, logit=2.0, embedder=None, **cfg) -> FaceCapturePipeline:
     settings = Settings(face_quality=FaceQualitySettings(**cfg))
     det = FakeDetector([make_face()] if faces is None else faces)
     lm = FakeLandmarker(eye_open)
-    return FaceCapturePipeline(settings, detector_factory=lambda: det, landmarker_factory=lambda: lm)
+    occ = FakeOcclusion(logit)
+    emb = embedder or FakeEmbedder()
+    return FaceCapturePipeline(
+        settings,
+        detector_factory=lambda: det,
+        landmarker_factory=lambda: lm,
+        occlusion_factory=lambda: occ,
+        embedder_factory=lambda: emb,
+    )
 
 
 def codes(reasons) -> set[str]:
@@ -139,9 +190,10 @@ def test_context_scale_is_limited_by_the_nearest_edge():
 # ------------------------------------------------------------------ per-frame checks
 
 
-def check(faces, eye_open=0.3, frame=None, **cfg):
-    lm = landmarks_106(eye_open) if faces else None
-    return assess(textured_frame() if frame is None else frame, faces, lm, FaceQualitySettings(**cfg))
+def check(faces, eye_open=0.3, mouth_open=0.02, frame=None, logit=None, **cfg):
+    lm = landmarks_106(eye_open, mouth_open) if faces else None
+    frame = textured_frame() if frame is None else frame
+    return assess(frame, faces, lm, FaceQualitySettings(**cfg), logit)
 
 
 def test_good_frame_passes():
@@ -200,22 +252,102 @@ def test_context_check_is_off_by_default_and_enforceable():
     assert "face_too_close_for_context" in codes(check([face], min_context_scale=2.7).reasons)
 
 
+def test_mouth_openness():
+    assert mouth_openness(landmarks_106(mouth_open=0.02)) < 0.05
+    assert mouth_openness(landmarks_106(mouth_open=0.3)) > 0.2
+
+
+def test_iris_offset_follows_the_dark_pupil():
+    def gray(frame):
+        return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+    centred = iris_offsets(gray(textured_frame()), landmarks_106())
+    right = iris_offsets(gray(textured_frame(iris_shift=0.3)), landmarks_106())
+    assert all(abs(v) < 0.08 for v in centred)
+    assert all(v > 0.15 for v in right)
+
+
+def test_open_mouth_blocks():
+    assert "mouth_open" in codes(check([make_face()], mouth_open=0.3).reasons)
+
+
+def test_gaze_off_centre_blocks():
+    assert "gaze_off_center" not in codes(check([make_face()]).reasons)
+    assert "gaze_off_center" in codes(check([make_face()], frame=textured_frame(iris_shift=0.3)).reasons)
+
+
+def test_occlusion_threshold():
+    assert "face_occluded" not in codes(check([make_face()], logit=-1.0).reasons)  # headscarf-like score
+    assert "face_occluded" in codes(check([make_face()], logit=-4.3).reasons)
+
+
+def test_background_check_severity_is_configurable():
+    busy = textured_frame()
+    for x in range(0, FRAME_W, 24):  # shelves / patterned wall: strong edges everywhere
+        cv2.line(busy, (x, 0), (x, FRAME_H), (250, 250, 250), 3)
+    plain = np.full((FRAME_H, FRAME_W, 3), 180, np.uint8)
+    plain[130:350, 240:400] = textured_frame()[130:350, 240:400]
+    face = make_face()
+    assert background_edge_density(plain, face)[0] < 0.02
+    info = check([face], frame=busy)
+    assert "background_not_uniform" in codes(info.reasons) and info.ok
+    assert not check([face], frame=busy, background_check="error").ok
+    assert "background_not_uniform" not in codes(check([face], frame=busy, background_check="off").reasons)
+
+
 # ------------------------------------------------------------------ sessions
 
 
-def test_selfie_is_captured_after_consecutive_good_frames():
+def test_stream_qualifies_then_the_still_becomes_the_selfie():
     p = build()
     sid = p.start().session_id
     assert p.submit_frame(sid, textured_frame())["state"] == "SEARCHING"
-    fb = p.submit_frame(sid, textured_frame())
+    assert p.submit_frame(sid, textured_frame())["state"] == "READY_FOR_STILL"
+
+    still = textured_frame(brightness=150)
+    fb = p.submit_still(sid, still)
     assert fb["state"] == "CAPTURED" and fb["capture_id"]
 
     result = p.result(sid, include_selfie=True)
     assert result.decision is Decision.PASS
-    assert result.data["capture_id"] == fb["capture_id"]
-    assert result.data["selfie_base64"]
+    assert result.data["source"] == "still"
+    assert result.data["metrics"]["still_similarity"] == pytest.approx(1.0)
     capture = p.get_capture(fb["capture_id"])
-    assert cv2.imdecode(np.frombuffer(capture.jpeg, np.uint8), cv2.IMREAD_COLOR).shape[:2] == (FRAME_H, FRAME_W)
+    stored = cv2.imdecode(np.frombuffer(capture.jpeg, np.uint8), cv2.IMREAD_COLOR)
+    assert abs(float(stored.mean()) - float(still.mean())) < 2  # the still, not a video frame
+
+
+def test_still_before_the_stream_qualifies_is_refused():
+    p = build()
+    with pytest.raises(SessionClosed):
+        p.submit_still(p.start().session_id, textured_frame())
+
+
+def test_still_of_a_different_person_is_rejected_and_the_stream_restarts():
+    p = build(embedder=FakeEmbedder([1.0, 0.0], [0.0, 1.0]))  # stream, then a different face
+    sid = p.start().session_id
+    p.submit_frame(sid, textured_frame())
+    p.submit_frame(sid, textured_frame())
+    fb = p.submit_still(sid, textured_frame())
+    assert fb["state"] == "SEARCHING"
+    assert "still_face_mismatch" in {h["code"] for h in fb["hints"]}
+
+
+def test_bad_still_sends_the_user_back_to_the_stream():
+    p = build()
+    sid = p.start().session_id
+    p.submit_frame(sid, textured_frame())
+    p.submit_frame(sid, textured_frame())
+    assert p.submit_still(sid, textured_frame(blur=6))["state"] == "SEARCHING"
+
+
+def test_without_require_still_the_best_stream_frame_is_kept():
+    p = build(require_still=False)
+    sid = p.start().session_id
+    p.submit_frame(sid, textured_frame())
+    fb = p.submit_frame(sid, textured_frame())
+    assert fb["state"] == "CAPTURED"
+    assert p.result(sid).data["source"] == "stream"
 
 
 def test_a_bad_frame_resets_the_streak():
@@ -224,7 +356,7 @@ def test_a_bad_frame_resets_the_streak():
     p.submit_frame(sid, textured_frame())
     p.submit_frame(sid, textured_frame(blur=6))
     assert p.submit_frame(sid, textured_frame())["state"] == "SEARCHING"
-    assert p.submit_frame(sid, textured_frame())["state"] == "CAPTURED"
+    assert p.submit_frame(sid, textured_frame())["state"] == "READY_FOR_STILL"
 
 
 def test_hints_carry_persian_instructions():
@@ -235,7 +367,7 @@ def test_hints_carry_persian_instructions():
 
 
 def test_session_is_closed_after_capture():
-    p = build(frames_required_ok=1)
+    p = build(frames_required_ok=1, require_still=False)
     sid = p.start().session_id
     p.submit_frame(sid, textured_frame())
     with pytest.raises(SessionClosed):
@@ -323,6 +455,10 @@ def test_api_capture_flow(client):
         fb = client.post(
             f"/v1/face-capture/sessions/{sid}/frames", files={"file": ("f.jpg", jpeg(textured_frame()), "image/jpeg")}
         ).json()
+    assert fb["state"] == "READY_FOR_STILL"
+    fb = client.post(
+        f"/v1/face-capture/sessions/{sid}/still", files={"file": ("s.jpg", jpeg(textured_frame()), "image/jpeg")}
+    ).json()
     assert fb["state"] == "CAPTURED"
     body = client.get(f"/v1/face-capture/sessions/{sid}/result").json()
     assert body["module"] == "face_quality"
@@ -351,5 +487,7 @@ def test_no_route_accepts_a_selfie_file_outside_a_session():
         "/v1/face-capture/sessions",
         "/v1/face-capture/sessions/{session_id}/frames",
         "/v1/face-capture/sessions/{session_id}/frames/base64",
+        "/v1/face-capture/sessions/{session_id}/still",
+        "/v1/face-capture/sessions/{session_id}/still/base64",
         "/v1/face-quality/check",
     }

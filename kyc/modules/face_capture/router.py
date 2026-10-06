@@ -2,7 +2,9 @@
 
 There is deliberately no endpoint that accepts a selfie file and returns a
 capture_id: a selfie only exists if it came through a capture session
-(specs/02-face-quality.md §2). `/v1/face-quality/check` judges an image but
+(specs/02-face-quality.md §2). The still photo is accepted only inside a
+session whose video stream has already qualified, and only if it shows the
+same person as that stream. `/v1/face-quality/check` judges an image but
 never produces a capture_id, so its output cannot reach face match.
 """
 
@@ -62,6 +64,27 @@ def submit_frame_base64(
     pipeline: FaceCapturePipeline = Depends(get_pipeline),
 ) -> dict:
     return pipeline.submit_frame(session_id, decode_base64_image(payload.image_base64))
+
+
+@router.post("/v1/face-capture/sessions/{session_id}/still", summary="Submit the still photo (the selfie)")
+async def submit_still(
+    session_id: str,
+    file: UploadFile = File(..., description="Full-resolution photo from the same camera"),
+    pipeline: FaceCapturePipeline = Depends(get_pipeline),
+) -> dict:
+    """Accepted only once the stream has qualified (state READY_FOR_STILL)."""
+    data = await file.read()
+    _guard_size(len(data))
+    return pipeline.submit_still(session_id, decode_image(data))
+
+
+@router.post("/v1/face-capture/sessions/{session_id}/still/base64", summary="Submit the still photo (base64)")
+def submit_still_base64(
+    session_id: str,
+    payload: FrameBase64,
+    pipeline: FaceCapturePipeline = Depends(get_pipeline),
+) -> dict:
+    return pipeline.submit_still(session_id, decode_base64_image(payload.image_base64))
 
 
 @router.get("/v1/face-capture/sessions/{session_id}/result", response_model=ModuleResult)

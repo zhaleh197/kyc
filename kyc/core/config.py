@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -127,9 +128,41 @@ class FaceQualitySettings(BaseSettings):
     # Eye aspect ratio; open eyes measured 0.24-0.35 on the test photos. No
     # closed-eye samples yet - the floor is the usual EAR rule of thumb.
     min_eye_openness: float = 0.15
+    # Inner-lip gap / mouth width. Closed mouths measured 0.004-0.048; a
+    # broad smile showing teeth 0.124. No open-mouth samples yet.
+    max_mouth_openness: float = 0.15
+    # Horizontal iris offset (mean of both eyes), 0 = centred. Test photos
+    # looking at the camera: |offset| <= 0.10; one with the head turned 0.15.
+    max_gaze_offset: float = 0.12
+
+    # --- occlusion (mask, hand, sunglasses) ------------------------------
+    occlusion_model: str = "face_occlusion_mnv3.onnx"
+    # Raw logit of the prototype's MobileNetV3; below this = covered. The
+    # prototype used 0.25, which flagged 4 headscarf faces and 1 bearded face
+    # out of 22 uncovered ones. At -3.0: no uncovered test face flagged, a
+    # real scarf-over-mouth face (-4.28) caught, most synthetic masks MISSED.
+    # A retrained model is needed (spec 02 Q5); this only catches clear cases.
+    min_clear_logit: float = -3.0
+
+    # --- background ----------------------------------------------------
+    # Edge density beside/above the head. Plain backgrounds measured 0-0.004,
+    # ordinary rooms 0.02-0.17, so nearly every selfie at home is "not
+    # uniform". off | info | warn | error - info shows the hint without
+    # blocking capture; set error only for passport-style requirements.
+    background_check: Literal["off", "info", "warn", "error"] = "info"
+    max_background_edge_density: float = 0.02
+    min_background_fraction: float = Field(0.05, description="Below this much visible background, skip the check")
 
     # --- session -------------------------------------------------------
-    frames_required_ok: int = Field(2, description="Consecutive passing frames before the selfie is captured")
+    frames_required_ok: int = Field(2, description="Consecutive passing stream frames before the still is requested")
+    # The selfie is a still photo taken from the same camera after the stream
+    # qualifies (higher resolution than video frames). It must show the same
+    # person as the stream: ArcFace cosine on the same image rescaled 0.99,
+    # different people ~0.0-0.3.
+    require_still: bool = True
+    embedding_model: str = "buffalo_l_w600k_r50.onnx"
+    min_still_similarity: float = 0.5
+    max_still_side: int = Field(2400, description="Stills larger than this are downscaled before storing")
     session_ttl_s: int = 120
     max_frames_per_session: int = 600
     selfie_jpeg_quality: int = 95
