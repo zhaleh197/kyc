@@ -1,0 +1,9 @@
+# Optional OCR recognition backends.
+#
+# easyocr pulls a CPU build of torch (~200MB). It is the zero-training default
+# so the pipeline works before any custom recogniser exists. Once the CRNN in
+# training/kaggle is trained and exported, switch KYC_OCR_TEXT_BACKEND=crnn_onnx
+# and this whole file becomes unnecessary.
+-r base.txt
+easyocr>=1.7.2
+torch>=2.2,<3.0 --index-url https://download.pytorch.org/whl/cpu

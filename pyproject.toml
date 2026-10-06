@@ -1,0 +1,24 @@
+[project]
+name = "kyc"
+version = "0.1.0"
+description = "Identity verification: document OCR, face quality, face matching, liveness, anti-spoofing, AI forensics"
+requires-python = ">=3.10"
+
+[tool.setuptools.packages.find]
+include = ["kyc*"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "C4", "SIM"]
+ignore = [
+  # FastAPI's dependency-injection idiom is a function call in a default.
+  "B008",
+  # Explicit if/else on a decision path reads better than a nested ternary.
+  "SIM108",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]

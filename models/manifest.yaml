@@ -1,0 +1,175 @@
+# Provenance for every model artifact in this directory.
+#
+# A KYC model that nobody can retrace is a model nobody can defend after an
+# incident. Record the dataset snapshot, the training command and the
+# validation metric for each export, and keep the sha256 so a deployed file can
+# be matched back to this record.
+
+artifacts:
+  - name: ir_national_card_front_fields.onnx
+    module: ocr
+    profile: ir_national_card_front
+    task: field detection on the raw (unrectified) photo
+    trained_by: training/kaggle/train_field_detector.py, run manually inside
+      the Kaggle notebook editor (interactive session, not a saved kernel
+      version) after `scripts.kaggle_run push` staged the code and dataset.
+    base_weights: yolov8n.pt
+    dataset: westco/idcardsegmentation-gz97d v8, downloaded by hand from the
+      Roboflow dashboard (the API's own export endpoint returns signed links
+      to objects missing from Roboflow's storage - see
+      scripts/roboflow_pull.py's MissingExport) and uploaded as the Kaggle
+      dataset zhalehmanbari/ir-card-yolo. 423 train / 27 val / 19 test images,
+      8 classes, polygon labels remapped to the profile's class order.
+    rectify: false
+      # The dataset's cards fill ~45% of each frame with no clean border; the
+      # classical contour-based rectifier (kyc/modules/ocr/rectify.py) found
+      # an outline in only 12% of them. Training rectified would have warped
+      # that 12% and merely resized the rest - two different geometries in
+      # one training set. KYC_OCR_RECTIFY must stay false in serving to match.
+    commit: TODO             # repo commit the training script was run from
+    sha256: de021c3d463d5f84d38f52773906cf59ab380fc3173483df1c6882d7b91ef873
+    exported_at: "2026-09-03"
+    validation:
+      note: >
+        Recomputed locally against the Roboflow test split (19 images, held
+        out from training) using onnxruntime, since the Kaggle run's own
+        val metrics were not captured (interactive session, no saved kernel
+        version/log). Recall at IoU 0.5 against ground-truth boxes, single
+        detection per class per image:
+      recall_at_iou50:
+        birthday: 1.00      # 19/19
+        exp: 1.00           # 19/19
+        fathername: 1.00    # 19/19
+        idcard: 1.00        # 19/19
+        idnumber: 1.00      # 19/19
+        img: 1.00           # 19/19
+        lastname: 0.84      # 16/19 - overlaps `name` in a crowded label column
+        name: 0.84          # 16/19 - same crowded region
+    known_limitations: >
+      Field localisation is strong. End-to-end reading with the easyocr
+      backend is not production quality yet: crops are small and tilted
+      (rectify=false, cards photographed at an angle), and easyocr's own
+      allowlist does not fully restrict its output (Arabic letters still
+      appear in digit-only date/national-id crops - a known library
+      limitation, confirmed directly against the reader). Free-text names
+      read reasonably (e.g. "پرنیان" at 0.87 confidence, "رادمهر" at 0.99),
+      dates read poorly. This was always the expected state for the
+      bootstrap backend; training crnn_onnx / crnn_onnx_digits on this
+      project's own crops is the intended fix, per training/kaggle/README.md.
+
+  - name: crnn_fa_text.onnx
+    module: ocr
+    task: Persian text line recognition (first/last/father name)
+    trained_by: >
+      training/kaggle/train_crnn.py --finetune-from <easyocr arabic.pth>,
+      run on Kaggle (kernel zhalehmanbari/kyc-crnn-fine-tune) on a T4 GPU via
+      training/kaggle/train_crnn_finetune.ipynb. A from-scratch (random-init)
+      attempt was tried first, locally on CPU - see history below - before
+      switching to fine-tuning from EasyOCR's own pretrained Arabic-script
+      recogniser, which is architecturally the same family (ResNet feature
+      extractor + 2-layer BiLSTM + CTC, blank=0) and whose 184-symbol charset
+      was checked directly against every corrected label in this project: zero
+      characters missing. Two real bugs were caught before this checkpoint by
+      testing with the real training batch size rather than assuming API
+      compatibility: EasyOCR's own forward() returns (N, T, C) while this
+      project's CTCLoss call expects (T, N, C) - identical at batch=1, wrong
+      at batch=16, silently; and a multi-worker DataLoader hung indefinitely
+      (12h+) when run locally on Windows from a background process, fixed by
+      num_workers=0 (loading ~2700 small PNGs is not the bottleneck on either
+      Kaggle or a local CPU box).
+    dataset: >
+      900 hand-corrected crops (round 1 + round 2 of manual correction,
+      concatenated into sample_text_combined.tsv) from
+      scripts/bootstrap_crnn_dataset.py over westco/idcardsegmentation-gz97d
+      v8 (see the field-detector entry above for provenance). Crops are
+      field-level, from the SAME unrectified images the detector was trained
+      on - not a rectified/cleaned subset.
+    rectify: false   # matches the field detector and the serving pipeline
+    command: >
+      python training/kaggle/train_crnn.py --labels .data/crnn_bootstrap/sample_text_combined.tsv
+      --name crnn_fa_text --epochs 80 --batch 16 --device cuda
+      --finetune-from <path to EasyOCR's arabic.pth> --out models
+    commit: TODO
+    metrics:
+      note: >
+        Measured against eval_text.tsv (49 crops, the dataset's `test_` split
+        - disjoint from every image used in training - hand-corrected in full)
+        using the actual CrnnOnnxRecognizer inference path, not the training
+        script's internal validation split. The normalised figure runs both
+        prediction and ground truth through kyc.modules.ocr.normalize.normalize_name
+        first, matching what the serving pipeline actually does before
+        comparing/validating a field.
+      exact_match: 0.347            # 17/49, raw
+      exact_match_normalised: 0.388  # 19/49, after normalize_name on both sides
+      normalised_edit_distance: 0.344
+      easyocr_baseline_exact_match: 0.571   # 28/49, same eval set, same normalisation
+      easyocr_baseline_edit_distance: 0.350
+    known_limitations: >
+      easyocr's own pretrained recogniser still beats this fine-tuned model on
+      names (57.1% vs 38.8% exact-match on the same held-out set), despite the
+      large jump fine-tuning gave over training from scratch (16.3% -> 34.7%
+      raw). KYC_OCR_TEXT_BACKEND stays "easyocr" until that changes. A visible
+      failure pattern: the model drops spaces in compound names ("امیر حسین"
+      predicted as "امیرحسین") often enough to fail exact-match while edit
+      distance stays low - worth checking whether spaces are well-represented
+      in the corrected training labels before assuming this needs more data
+      generally. Earlier from-scratch attempts (superseded) found: two
+      checkpoint-selection/optimiser bugs (fixed - see crnn_fa_digits.onnx's
+      history), and two failed attempts at fixing crop tilt geometrically
+      (padded-crop rectification and field-pair angle estimation, both
+      measured and rejected - see training/kaggle/README.md). More corrected
+      data may still help; round-2 correction is already folded into this
+      checkpoint's training set.
+    sha256: 8adf256f1d264b3d9784636cc7fa7efeda6139f0aa59165e4fd1bc031e778444
+    exported_at: "2026-09-14"
+
+  - name: crnn_fa_digits.onnx
+    module: ocr
+    task: digit and date line recognition (national id, birth/expiry date)
+    # NOT a restricted charset at the model level - see known_limitations.
+    charset: EasyOCR's full 184-symbol Arabic-script set (same as crnn_fa_text.onnx)
+    trained_by: >
+      training/kaggle/train_crnn.py --finetune-from <easyocr arabic.pth>,
+      same run as crnn_fa_text.onnx above (Kaggle T4, kyc-crnn-fine-tune).
+    dataset: >
+      542 hand-corrected crops (round 1 + round 2 concatenated into
+      sample_digits_combined.tsv), same source and caveats as crnn_fa_text.onnx.
+    rectify: false
+    command: >
+      python training/kaggle/train_crnn.py --labels .data/crnn_bootstrap/sample_digits_combined.tsv
+      --name crnn_fa_digits --charset "0123456789/" --epochs 80 --batch 16
+      --device cuda --finetune-from <path to EasyOCR's arabic.pth> --out models
+    commit: TODO
+    metrics:
+      note: Measured the same way as crnn_fa_text.onnx, against eval_digits.tsv (57 crops).
+      exact_match: 0.684    # 39/57
+      normalised_edit_distance: 0.123
+      easyocr_baseline_exact_match: 0.070   # 4/57, same eval set
+      easyocr_baseline_edit_distance: 0.465
+    known_limitations: >
+      Decisive win over easyocr (68.4% vs 7.0% exact-match) - the reverse of
+      crnn_fa_text.onnx's result. The likely reason is structural, not just
+      more/better data: easyocr's own `allowlist` parameter does NOT actually
+      restrict its output (confirmed directly against the library - Arabic
+      letters still came out of digit-only crops even with
+      allowlist="0123456789/"), while kyc/modules/ocr/recognizers/crnn_onnx.py's
+      `_mask_to_allowlist` masks logits to -inf before argmax, a hard
+      constraint. --charset "0123456789/" is IGNORED when --finetune-from is
+      set (train_crnn.py prints a warning) because resizing EasyOCR's
+      pretrained output layer would discard its weights for the classes this
+      project does keep; the same 184-symbol charset as crnn_fa_text.onnx is
+      used instead, and the digit-only guarantee comes entirely from the
+      allowlist mask applied at serving time, not from the model's own class
+      count. Remaining errors are mostly single-digit substitutions or one
+      extra/missing digit in a run of similar-looking numerals (e.g.
+      "9783684140" -> "9834814240"), not garbage - this looks like a data/
+      training-volume ceiling rather than a structural problem.
+      Superseded from-scratch history: predicting the checkpoint-selection bug
+      (exact-match accuracy sitting at literal 0.0 for the whole run, since a
+      10-character string rarely matches exactly early in training - switched
+      to selecting by edit distance instead) and the batch-size/optimiser-step
+      bug (batch=64 against ~250 rows gave ~4 steps/epoch; --batch defaults to
+      16 now) both first showed up here, then got carried over to
+      crnn_fa_text.onnx's fix too.
+    sha256: 138e8dc7c07535afd7fa078ccab80a3e1aa8b004c2b1023d564a3ca4bc0c94c8
+    exported_at: "2026-09-14"
