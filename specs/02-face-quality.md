@@ -307,5 +307,17 @@ Changes to this spec from what was found:
   AVX2). Fine for guidance at the prototype's 1 frame/s; re-measure on the
   server.
 
+- **Darkness was reported as blur.** Darkening a sharp photo to 25% also
+  drops its Laplacian variance below the floor, and since blur was checked
+  first, the user was told "blurry" when the fix was more light. Blur is now
+  judged only at acceptable exposure. (Found by the calibration script.)
+
+Calibration tooling (2026-10-07): `/dev/face-capture` (only with
+`KYC_DEBUG=true`) drives the real API from a webcam, shows per-frame
+metrics, and saves labelled frames to the developer's own disk;
+`python -m scripts.calibrate_face_quality --dir <frames>` reports, per label,
+how often the expected check fired, how often normal/headscarf frames were
+wrongly blocked, and the metric ranges to pick thresholds from.
+
 Not built yet: retrained occlusion model (Q5), multi-worker session store
-(Redis), the browser capture page, threshold calibration on webcam frames.
+(Redis), threshold calibration on real webcam frames (tooling ready).

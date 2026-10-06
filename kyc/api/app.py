@@ -59,6 +59,10 @@ def create_app() -> FastAPI:
 
     app.include_router(ocr_router)
     app.include_router(face_capture_router)
+    if settings.debug:
+        from kyc.api.dev import router as dev_router
+
+        app.include_router(dev_router)
     return app
 
 

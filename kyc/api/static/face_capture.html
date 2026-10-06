@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Face capture test</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1d2330; --muted:#677085; --ok:#1f8a4c; --err:#c0392b; --warn:#b7791f; --info:#2b6cb0; --line:#e3e6ec; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: Tahoma, "Segoe UI", sans-serif; background:var(--bg); color:var(--ink); }
+  main { max-width: 1100px; margin: 0 auto; padding: 16px; display:grid; gap:16px; grid-template-columns: minmax(0,1.4fr) minmax(0,1fr); }
+  @media (max-width: 820px) { main { grid-template-columns: 1fr; } }
+  section { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; }
+  h1 { font-size:18px; margin:0 0 4px; } h2 { font-size:15px; margin:0 0 10px; }
+  .sub { color:var(--muted); font-size:13px; margin:0 0 12px; }
+  .stage { position:relative; background:#111; border-radius:10px; overflow:hidden; aspect-ratio: 4/3; }
+  video, #selfie { width:100%; height:100%; object-fit:cover; display:block; }
+  video { transform: scaleX(-1); }
+  #selfie { display:none; object-fit:contain; background:#111; }
+  .state { position:absolute; top:10px; right:10px; padding:4px 10px; border-radius:999px; font-size:12px; background:rgba(0,0,0,.6); color:#fff; direction:ltr; }
+  .hint-main { margin-top:10px; min-height:48px; padding:12px; border-radius:10px; font-size:17px; background:#eef1f5; }
+  .hint-main.ok { background:#e6f4ec; color:var(--ok); } .hint-main.err { background:#fbeaea; color:var(--err); }
+  ul.hints { list-style:none; padding:0; margin:8px 0 0; font-size:13px; }
+  ul.hints li { padding:3px 0; } .sev-error{color:var(--err)} .sev-warn{color:var(--warn)} .sev-info{color:var(--info)}
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:12px; }
+  button, select { font: inherit; padding:8px 14px; border-radius:8px; border:1px solid var(--line); background:#fff; cursor:pointer; }
+  button.primary { background:#2b6cb0; border-color:#2b6cb0; color:#fff; }
+  button:disabled { opacity:.5; cursor:default; }
+  table { width:100%; border-collapse:collapse; font-size:12px; direction:ltr; }
+  td { padding:3px 4px; border-bottom:1px solid var(--line); } td:last-child { text-align:right; font-variant-numeric: tabular-nums; }
+  pre { direction:ltr; text-align:left; font-size:11px; background:#f3f4f7; padding:8px; border-radius:8px; max-height:220px; overflow:auto; white-space:pre-wrap; }
+  .muted { color:var(--muted); font-size:12px; }
+  label { font-size:13px; }
+</style>
+</head>
+<body>
+<main>
+  <section>
+    <h1>تست گرفتن سلفی</h1>
+    <p class="sub">صفحهٔ توسعه — فقط با <code>KYC_DEBUG=true</code> در دسترس است. ویدیو برای راهنمایی، سپس یک عکس با کیفیت کامل از همان دوربین.</p>
+    <div class="stage">
+      <video id="video" playsinline muted></video>
+      <img id="selfie" alt="">
+      <div class="state" id="state">—</div>
+    </div>
+    <div class="hint-main" id="hint">برای شروع، «شروع» را بزنید.</div>
+    <ul class="hints" id="hints"></ul>
+    <div class="row">
+      <button class="primary" id="start">شروع</button>
+      <button id="stop" disabled>توقف</button>
+      <span class="muted" id="rate"></span>
+    </div>
+  </section>
+
+  <section>
+    <h2>اعداد اندازه‌گیری‌شده (آخرین فریم)</h2>
+    <table id="metrics"><tbody><tr><td class="muted">هنوز فریمی ارسال نشده</td><td></td></tr></tbody></table>
+
+    <h2 style="margin-top:16px">کالیبراسیون</h2>
+    <p class="muted">فریم با یک برچسب روی <b>همین کامپیوتر</b> دانلود می‌شود (به سرور فرستاده نمی‌شود). پوشه را به <code>scripts/calibrate_face_quality.py</code> بدهید.</p>
+    <div class="row">
+      <select id="label">
+        <option value="normal">عادی (باید قبول شود)</option>
+        <option value="eyes_closed">چشم بسته</option>
+        <option value="mouth_open">دهان باز</option>
+        <option value="gaze_left">نگاه به چپ</option>
+        <option value="gaze_right">نگاه به راست</option>
+        <option value="head_turned">سر چرخیده</option>
+        <option value="head_up">سر رو به بالا</option>
+        <option value="head_down">سر رو به پایین</option>
+        <option value="head_tilted">سر کج</option>
+        <option value="mask">ماسک</option>
+        <option value="sunglasses">عینک آفتابی</option>
+        <option value="hand">دست جلوی صورت</option>
+        <option value="headscarf">روسری/شال (باید قبول شود)</option>
+        <option value="dark">تاریک</option>
+        <option value="bright">نور زیاد</option>
+        <option value="blurry">تار (حرکت)</option>
+        <option value="far">دور</option>
+        <option value="near">نزدیک</option>
+      </select>
+      <button id="save" disabled>ذخیرهٔ فریم فعلی</button>
+      <label><input type="checkbox" id="burst"> ۵ فریم پشت‌سرهم</label>
+    </div>
+    <p class="muted" id="saved"></p>
+
+    <h2 style="margin-top:16px">نتیجه</h2>
+    <pre id="result">—</pre>
+  </section>
+</main>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const video = $("video"), selfieImg = $("selfie");
+  const FRAME_MAX_W = 960, MIN_GAP_MS = 400;
+  let stream = null, sessionId = null, running = false, lastJpeg = null, savedCount = 0, sent = 0, t0 = 0;
+
+  async function api(path, opts = {}) {
+    const r = await fetch(path, opts);
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw Object.assign(new Error(body.message || r.statusText), { status: r.status, body });
+    return body;
+  }
+
+  function canvasJpeg(source, w, h, maxW, quality = 0.9) {
+    const scale = Math.min(1, maxW / w);
+    const c = document.createElement("canvas");
+    c.width = Math.round(w * scale); c.height = Math.round(h * scale);
+    c.getContext("2d").drawImage(source, 0, 0, c.width, c.height);
+    return new Promise((res) => c.toBlob(res, "image/jpeg", quality));
+  }
+
+  function showFeedback(fb) {
+    $("state").textContent = fb.state;
+    const errors = fb.hints.filter((h) => h.severity === "error");
+    const hint = $("hint");
+    if (fb.state === "READY_FOR_STILL") { hint.className = "hint-main ok"; hint.textContent = "عالی — ثابت بمانید، عکس گرفته می‌شود…"; }
+    else if (fb.state === "CAPTURED") { hint.className = "hint-main ok"; hint.textContent = "✅ سلفی گرفته شد"; }
+    else if (errors.length) { hint.className = "hint-main err"; hint.textContent = errors[0].message_fa; }
+    else { hint.className = "hint-main"; hint.textContent = "خوب است، همین‌طور بمانید…"; }
+    $("hints").innerHTML = fb.hints.map((h) => `<li class="sev-${h.severity}">● ${h.message_fa} <span class="muted">(${h.code})</span></li>`).join("");
+    if (fb.metrics) {
+      $("metrics").innerHTML = "<tbody>" + Object.entries(fb.metrics)
+        .map(([k, v]) => `<tr><td>${k}</td><td>${typeof v === "number" ? v.toFixed(3) : v}</td></tr>`).join("") + "</tbody>";
+    }
+  }
+
+  async function takeStill() {
+    const track = stream.getVideoTracks()[0];
+    if ("ImageCapture" in window) {
+      try { return { blob: await new ImageCapture(track).takePhoto(), how: "ImageCapture.takePhoto" }; }
+      catch (e) { console.warn("takePhoto failed, falling back to a video frame", e); }
+    }
+    return { blob: await canvasJpeg(video, video.videoWidth, video.videoHeight, 4096, 0.95), how: "largest video frame" };
+  }
+
+  async function loop() {
+    while (running) {
+      const started = performance.now();
+      try {
+        const jpeg = await canvasJpeg(video, video.videoWidth, video.videoHeight, FRAME_MAX_W, 0.85);
+        lastJpeg = jpeg;
+        const fd = new FormData(); fd.append("file", jpeg, "frame.jpg");
+        const fb = await api(`/v1/face-capture/sessions/${sessionId}/frames`, { method: "POST", body: fd });
+        sent++; $("rate").textContent = `${sent} فریم — ${(sent / ((performance.now() - t0) / 1000)).toFixed(1)} فریم/ثانیه`;
+        showFeedback(fb);
+        if (fb.state === "READY_FOR_STILL") {
+          const { blob, how } = await takeStill();
+          const sd = new FormData(); sd.append("file", blob, "still.jpg");
+          const sfb = await api(`/v1/face-capture/sessions/${sessionId}/still`, { method: "POST", body: sd });
+          showFeedback(sfb);
+          console.info("still taken via", how);
+          if (sfb.state === "CAPTURED") { await finish(); return; }
+        }
+      } catch (e) {
+        $("hint").className = "hint-main err"; $("hint").textContent = `خطا: ${e.message}`;
+        if (e.status === 404 || e.status === 409) { running = false; break; }
+      }
+      const wait = MIN_GAP_MS - (performance.now() - started);
+      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    }
+  }
+
+  async function finish() {
+    running = false;
+    const result = await api(`/v1/face-capture/sessions/${sessionId}/result?include_selfie=true`);
+    const shown = { ...result, data: { ...result.data, selfie_base64: result.data.selfie_base64 ? "(shown on the left)" : null } };
+    $("result").textContent = JSON.stringify(shown, null, 2);
+    if (result.data.selfie_base64) {
+      selfieImg.src = "data:image/jpeg;base64," + result.data.selfie_base64;
+      selfieImg.style.display = "block"; video.style.display = "none";
+    }
+    stopCamera(false);
+  }
+
+  async function start() {
+    $("result").textContent = "—"; selfieImg.style.display = "none"; video.style.display = "block";
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+    } catch (e) {
+      $("hint").className = "hint-main err"; $("hint").textContent = "دسترسی به دوربین ممکن نشد: " + e.message; return;
+    }
+    video.srcObject = stream; await video.play();
+    sessionId = (await api("/v1/face-capture/sessions", { method: "POST" })).session_id;
+    running = true; sent = 0; t0 = performance.now();
+    $("start").disabled = true; $("stop").disabled = false; $("save").disabled = false;
+    loop();
+  }
+
+  function stopCamera(resetHint = true) {
+    running = false;
+    if (stream) stream.getTracks().forEach((t) => t.stop());
+    stream = null;
+    $("start").disabled = false; $("stop").disabled = true; $("save").disabled = true;
+    if (resetHint) { $("hint").className = "hint-main"; $("hint").textContent = "متوقف شد."; }
+  }
+
+  async function saveFrames() {
+    const label = $("label").value, n = $("burst").checked ? 5 : 1;
+    for (let i = 0; i < n; i++) {
+      const blob = await canvasJpeg(video, video.videoWidth, video.videoHeight, FRAME_MAX_W, 0.85);
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `${label}__${new Date().toISOString().replace(/[:.]/g, "-")}_${i}.jpg`;
+      a.click(); URL.revokeObjectURL(a.href); savedCount++;
+      if (i < n - 1) await new Promise((r) => setTimeout(r, 300));
+    }
+    $("saved").textContent = `${savedCount} فریم ذخیره شد (آخرین برچسب: ${label})`;
+  }
+
+  $("start").onclick = start;
+  $("stop").onclick = () => stopCamera();
+  $("save").onclick = saveFrames;
+})();
+</script>
+</body>
+</html>

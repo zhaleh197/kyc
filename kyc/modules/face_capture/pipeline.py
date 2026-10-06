@@ -119,7 +119,7 @@ class FaceCapturePipeline:
             session.last_hints = a.reasons
             if session.state is CaptureState.READY_FOR_STILL:
                 # Keep guiding while the client takes the still; qualification stands.
-                return self._feedback(session, a.reasons)
+                return self._feedback(session, a)
 
             if a.ok:
                 session.ok_streak += 1
@@ -137,7 +137,7 @@ class FaceCapturePipeline:
             else:
                 session.ok_streak = 0
                 session.candidate = None
-            return self._feedback(session, a.reasons)
+            return self._feedback(session, a)
 
     def submit_still(self, session_id: str, image: np.ndarray) -> dict:
         """The selfie itself: a still photo from the same camera, after the stream qualified."""
@@ -169,7 +169,7 @@ class FaceCapturePipeline:
                 session.ok_streak = 0
                 session.candidate = None
                 session.stream_embedding = None
-            return self._feedback(session, a.reasons)
+            return self._feedback(session, a)
 
     def result(self, session_id: str, *, include_selfie: bool = False) -> ModuleResult:
         session = self._session(session_id)
@@ -253,18 +253,22 @@ class FaceCapturePipeline:
         session.candidate = None
         session.stream_embedding = None
 
-    @staticmethod
-    def _feedback(session: CaptureSession, reasons: list[Reason]) -> dict:
-        return {
+    def _feedback(self, session: CaptureSession, a: quality.FrameAssessment) -> dict:
+        feedback = {
             "state": session.state.value,
             "hints": [
                 {"code": r.code, "severity": r.severity.value, "message_fa": r.message_fa, "message_en": r.message_en}
-                for r in reasons
+                for r in a.reasons
             ],
             "capture_id": session.capture_id,
             "frames_seen": session.frames_seen,
             "expires_in_s": max(0.0, round(session.expires_at - time.time(), 1)),
         }
+        if self.settings.debug:
+            # Raw measurements help calibrate thresholds; not exposed in
+            # production, where they would also help someone game the checks.
+            feedback["metrics"] = a.metrics
+        return feedback
 
 
 def _decision(reasons: list[Reason]) -> Decision:

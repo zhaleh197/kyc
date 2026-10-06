@@ -136,12 +136,15 @@ def assess(
     left, right = gray[:, : CROP_SIZE // 2].mean(), gray[:, CROP_SIZE // 2 :].mean()
     m["illumination_asymmetry"] = round(float(abs(left - right) / max(mean, 1.0)), 4)
 
-    if m["sharpness"] < cfg.min_sharpness:
-        out.reasons.append(_err("face_blurry", "Face is blurry", "تصویر تار است؛ دوربین را ثابت نگه دارید"))
     if mean < cfg.min_brightness:
         out.reasons.append(_err("face_too_dark", "Face is too dark", "نور کافی نیست؛ به جای روشن‌تری بروید"))
     elif mean > cfg.max_brightness:
         out.reasons.append(_err("face_too_bright", "Face is overexposed", "نور زیاد است؛ از نور مستقیم دور شوید"))
+    elif m["sharpness"] < cfg.min_sharpness:
+        # Judged only at acceptable exposure: darkening a sharp photo to 25%
+        # drops its Laplacian variance below the floor too, and the user was
+        # then told "blurry" when the fix was more light.
+        out.reasons.append(_err("face_blurry", "Face is blurry", "تصویر تار است؛ دوربین را ثابت نگه دارید"))
     if m["illumination_asymmetry"] > cfg.max_illumination_asymmetry:
         # Info, not warn: 6 of 15 ordinary indoor test photos measured above
         # 0.5 on both the whole face box and its inner region - one-sided

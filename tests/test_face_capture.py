@@ -491,3 +491,42 @@ def test_no_route_accepts_a_selfie_file_outside_a_session():
         "/v1/face-capture/sessions/{session_id}/still/base64",
         "/v1/face-quality/check",
     }
+
+
+# ------------------------------------------------------------------ dev page
+
+
+def _app_with_debug(monkeypatch, debug: bool):
+    from kyc.api.app import create_app
+    from kyc.core.config import get_settings
+
+    monkeypatch.setenv("KYC_DEBUG", "true" if debug else "false")
+    get_settings.cache_clear()
+    try:
+        return create_app()
+    finally:
+        get_settings.cache_clear()
+
+
+def test_dev_page_exists_only_in_debug(monkeypatch):
+    assert TestClient(_app_with_debug(monkeypatch, False)).get("/dev/face-capture").status_code == 404
+    page = TestClient(_app_with_debug(monkeypatch, True)).get("/dev/face-capture")
+    assert page.status_code == 200
+    assert "/v1/face-capture/sessions" in page.text
+    assert 'type="file"' not in page.text  # camera only - no upload control
+
+
+def test_metrics_are_in_feedback_only_in_debug():
+    quiet = build()
+    assert "metrics" not in quiet.submit_frame(quiet.start().session_id, textured_frame())
+    verbose = build()
+    verbose.settings.debug = True
+    fb = verbose.submit_frame(verbose.start().session_id, textured_frame())
+    assert "sharpness" in fb["metrics"]
+
+
+def test_a_dark_frame_is_reported_as_dark_not_blurry():
+    dark = (textured_frame() * 0.25).astype(np.uint8)
+    found = codes(check([make_face()], frame=dark).reasons)
+    assert "face_too_dark" in found
+    assert "face_blurry" not in found
