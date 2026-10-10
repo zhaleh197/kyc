@@ -29,7 +29,7 @@ from kyc.core.face.geometry import (
 )
 from kyc.core.schemas import Decision
 from kyc.modules.face_capture.pipeline import FaceCapturePipeline, SessionClosed
-from kyc.modules.face_capture.quality import assess, background_edge_density, context_scale
+from kyc.modules.face_capture.quality import assess, background_stats, context_scale
 from kyc.modules.face_capture.router import get_pipeline
 
 FRAME_W, FRAME_H = 640, 480
@@ -251,7 +251,9 @@ def test_uneven_lighting_is_informational_only():
     frame = textured_frame()
     frame[:, :320] //= 4
     # The darkened half covers one eye; gaze is not what this test is about.
-    a = check([make_face()], frame=frame, min_brightness=10, min_gaze_vertical=-9, max_gaze_vertical=9)
+    a = check(
+        [make_face()], frame=frame, min_brightness=10, min_gaze_vertical=-9, max_gaze_vertical=9, background_check="off"
+    )
     assert "uneven_lighting" in codes(a.reasons)
     assert a.ok
 
@@ -310,7 +312,8 @@ def test_background_check_blocks_by_default_and_is_configurable():
     plain = np.full((FRAME_H, FRAME_W, 3), 180, np.uint8)
     plain[130:350, 240:400] = textured_frame()[130:350, 240:400]
     face = make_face()
-    assert background_edge_density(plain, face)[0] < 0.03
+    density, spread, _ = background_stats(plain, face)
+    assert density < 0.03 and spread < 30
     assert not check([face], frame=busy).ok  # default: error (team requirement)
     info = check([face], frame=busy, background_check="info")
     assert "background_not_uniform" in codes(info.reasons) and info.ok
@@ -552,3 +555,38 @@ def test_a_dark_frame_is_reported_as_dark_not_blurry():
     found = codes(check([make_face()], frame=dark).reasons)
     assert "face_too_dark" in found
     assert "face_blurry" not in found
+
+
+def test_blurred_busy_background_is_caught_by_its_spread():
+    """Webcams blur the background: soft shapes have few edges but a wide
+    luma spread (a blurred office read edges 0.017, std 44.7)."""
+    frame = textured_frame()
+    cv2.rectangle(frame, (0, 0), (200, 480), (30, 30, 30), -1)  # dark doorway on the left
+    cv2.rectangle(frame, (440, 0), (640, 480), (230, 230, 230), -1)  # bright window on the right
+    frame = cv2.GaussianBlur(frame, (0, 0), 15)
+    frame[130:350, 240:400] = textured_frame()[130:350, 240:400]  # the face itself stays sharp
+    density, spread, _ = background_stats(frame, make_face())
+    assert density < 0.03 and spread > 30
+    assert "background_not_uniform" in codes(check([make_face()], frame=frame).reasons)
+
+
+def test_hint_does_not_flicker_on_a_single_bad_frame():
+    p = build()
+    sid = p.start().session_id
+    blurry = textured_frame(blur=6)
+    assert p.submit_frame(sid, blurry)["primary_hint"] is None  # once: not yet shown
+    assert p.submit_frame(sid, blurry)["primary_hint"]["code"] == "face_blurry"  # twice: shown
+    # One frame with a different problem does not replace it...
+    dark = (textured_frame() * 0.25).astype(np.uint8)
+    assert p.submit_frame(sid, dark)["primary_hint"]["code"] == "face_blurry"
+    # ...but a persistent one does.
+    assert p.submit_frame(sid, dark)["primary_hint"]["code"] == "face_too_dark"
+
+
+def test_hint_clears_once_frames_are_clean():
+    p = build(frames_required_ok=10)
+    sid = p.start().session_id
+    for _ in range(2):
+        p.submit_frame(sid, textured_frame(blur=6))
+    hints = [p.submit_frame(sid, textured_frame())["primary_hint"] for _ in range(3)]
+    assert hints[-1] is None

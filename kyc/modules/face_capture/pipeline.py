@@ -253,9 +253,48 @@ class FaceCapturePipeline:
         session.candidate = None
         session.stream_embedding = None
 
+    def _stable_hint(self, session: CaptureSession, a: quality.FrameAssessment) -> Reason | None:
+        """The one hint to show: a blocking problem seen in at least
+        `hint_min_count` of the last `hint_window` frames (highest priority
+        first). Until another problem qualifies, the current one stays."""
+        cfg = self.settings.face_quality
+        errors = [r for r in a.reasons if r.severity is Severity.ERROR]
+        session.recent_codes = (session.recent_codes + [[r.code for r in errors]])[-cfg.hint_window :]
+        rank = {code: i for i, code in enumerate(quality.HINT_PRIORITY)}
+        counts: dict[str, int] = {}
+        for codes in session.recent_codes:
+            for code in codes:
+                counts[code] = counts.get(code, 0) + 1
+        steady = sorted((c for c, n in counts.items() if n >= cfg.hint_min_count), key=lambda c: rank.get(c, len(rank)))
+        if not steady:
+            # Nothing persistent: keep showing the previous hint unless the
+            # recent frames have all been clean.
+            if not any(session.recent_codes):
+                session.shown_hint = None
+        elif session.shown_hint not in steady:
+            session.shown_hint = steady[0]
+        if session.shown_hint is None:
+            return None
+        by_code = {r.code: r for r in errors}
+        if session.shown_hint in by_code:
+            return by_code[session.shown_hint]
+        # Shown problem absent from this frame but still steady: reuse its text.
+        for frame in reversed(session.last_reasons_by_code):
+            if session.shown_hint in frame:
+                return frame[session.shown_hint]
+        return None
+
     def _feedback(self, session: CaptureSession, a: quality.FrameAssessment) -> dict:
+        session.last_reasons_by_code = (
+            session.last_reasons_by_code + [{r.code: r for r in a.reasons if r.severity is Severity.ERROR}]
+        )[-self.settings.face_quality.hint_window :]
+        primary = self._stable_hint(session, a)
         feedback = {
             "state": session.state.value,
+            # The single, debounced instruction to show; `hints` is this frame only.
+            "primary_hint": None
+            if primary is None
+            else {"code": primary.code, "message_fa": primary.message_fa, "message_en": primary.message_en},
             "hints": [
                 {"code": r.code, "severity": r.severity.value, "message_fa": r.message_fa, "message_en": r.message_en}
                 for r in a.reasons

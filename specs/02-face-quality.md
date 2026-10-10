@@ -109,6 +109,7 @@ Frame response (feedback, not a `ModuleResult`):
 ```json
 {
   "state": "SEARCHING | READY_FOR_STILL | CAPTURED | EXPIRED",
+  "primary_hint": {"code": "face_too_small", "message_fa": "نزدیک‌تر بیایید"},
   "hints": [{"code": "face_too_small", "message_fa": "نزدیک‌تر بیایید"}],
   "capture_id": null
 }
@@ -342,4 +343,22 @@ hints are now ordered with cover first.
 
 Lesson, again: thresholds from still photos did not survive the first live
 frame. Calibration on labelled webcam frames is the next step, not optional.
+
+### 2026-10-11 — second real test
+
+A selfie passed with the face filling 75% of the frame in front of a room
+background (dark doorway, bright wall). Changes:
+
+- **Background: edges alone miss blurred backgrounds.** Webcams leave the
+  background out of focus; the frame read edge density 0.027, and an
+  out-of-focus office test photo only 0.017. Added luma spread (std): plain
+  walls 3.5–20.4, the office 44.7, real room frames 42–50. Not plain =
+  edge density > 0.03 **or** std > 30 (the prototype used std 25–30).
+- **Too close: limit lowered from 0.80 to 0.65** of frame height. At 0.75
+  there was almost no background to judge and anti-spoof had no context.
+- **Hints no longer flicker.** The server still checks every frame (the
+  capture streak needs it) but returns a debounced `primary_hint`: a problem
+  becomes the shown hint only once it appears in 2 of the last 3 frames, and
+  stays until another one does or the frames come back clean. The page also
+  holds each message at least 1.5 s.
 

@@ -95,7 +95,9 @@ class FaceQualitySettings(BaseSettings):
 
     # --- framing -------------------------------------------------------
     min_face_height_ratio: float = Field(0.20, description="Face box height / frame height floor")
-    max_face_height_ratio: float = Field(0.80, description="Face box height / frame height ceiling")
+    # 0.80 let a face fill 75% of a real webcam frame: almost no background
+    # left to judge, and anti-spoof loses its context (context_scale 1.2).
+    max_face_height_ratio: float = Field(0.65, description="Face box height / frame height ceiling")
     max_center_offset: float = Field(
         0.25, description="Face centre distance from frame centre, as a fraction of frame size"
     )
@@ -159,7 +161,17 @@ class FaceQualitySettings(BaseSettings):
     # off | info | warn | error.
     background_check: Literal["off", "info", "warn", "error"] = "error"
     max_background_edge_density: float = 0.03
+    # Luma std of the background. Plain walls 3.5-20.4; a blurred office
+    # 44.7, real webcam frames in a room 42-50. The prototype used 25-30.
+    max_background_luma_std: float = 30.0
     min_background_fraction: float = Field(0.05, description="Below this much visible background, skip the check")
+
+    # --- hints ---------------------------------------------------------
+    # The hint shown to the user changes only when a problem appears in at
+    # least `hint_min_count` of the last `hint_window` frames, so it does not
+    # flicker frame to frame. Capture itself still uses every frame.
+    hint_window: int = 3
+    hint_min_count: int = 2
 
     # --- session -------------------------------------------------------
     frames_required_ok: int = Field(2, description="Consecutive passing stream frames before the still is requested")

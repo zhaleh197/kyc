@@ -93,7 +93,16 @@
 (() => {
   const $ = (id) => document.getElementById(id);
   const video = $("video"), selfieImg = $("selfie");
-  const FRAME_MAX_W = 960, MIN_GAP_MS = 400;
+  const FRAME_MAX_W = 960, MIN_GAP_MS = 400, MIN_HINT_MS = 1500;
+  let shownText = "", shownAt = 0;
+  function setHint(cls, text) {
+    // Hold each message for at least MIN_HINT_MS so it can be read.
+    const now = performance.now();
+    if (text !== shownText && now - shownAt < MIN_HINT_MS && cls !== "hint-main ok") return;
+    const hint = $("hint");
+    if (text !== shownText) { shownText = text; shownAt = now; }
+    hint.className = cls; hint.textContent = text;
+  }
   let stream = null, sessionId = null, running = false, lastJpeg = null, savedCount = 0, sent = 0, t0 = 0;
 
   async function api(path, opts = {}) {
@@ -113,12 +122,10 @@
 
   function showFeedback(fb) {
     $("state").textContent = fb.state;
-    const errors = fb.hints.filter((h) => h.severity === "error");
-    const hint = $("hint");
-    if (fb.state === "READY_FOR_STILL") { hint.className = "hint-main ok"; hint.textContent = "عالی — ثابت بمانید، عکس گرفته می‌شود…"; }
-    else if (fb.state === "CAPTURED") { hint.className = "hint-main ok"; hint.textContent = "✅ سلفی گرفته شد"; }
-    else if (errors.length) { hint.className = "hint-main err"; hint.textContent = errors[0].message_fa; }
-    else { hint.className = "hint-main"; hint.textContent = "خوب است، همین‌طور بمانید…"; }
+    if (fb.state === "READY_FOR_STILL") setHint("hint-main ok", "عالی — ثابت بمانید، عکس گرفته می‌شود…");
+    else if (fb.state === "CAPTURED") setHint("hint-main ok", "✅ سلفی گرفته شد");
+    else if (fb.primary_hint) setHint("hint-main err", fb.primary_hint.message_fa);
+    else setHint("hint-main", "خوب است، همین‌طور بمانید…");
     $("hints").innerHTML = fb.hints.map((h) => `<li class="sev-${h.severity}">● ${h.message_fa} <span class="muted">(${h.code})</span></li>`).join("");
     if (fb.metrics) {
       $("metrics").innerHTML = "<tbody>" + Object.entries(fb.metrics)

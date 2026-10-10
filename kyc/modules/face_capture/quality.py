@@ -64,9 +64,15 @@ def face_crop_gray(img: np.ndarray, face: Face) -> np.ndarray:
     return cv2.resize(gray, (CROP_SIZE, CROP_SIZE), interpolation=cv2.INTER_AREA)
 
 
-def background_edge_density(img: np.ndarray, face: Face) -> tuple[float, float]:
-    """(edge density, fraction of frame used) on the background beside and
-    above the head, at most down to chin level so the torso is excluded.
+def background_stats(img: np.ndarray, face: Face) -> tuple[float, float, float]:
+    """(edge density, luma std, fraction of frame used) on the background
+    beside and above the head, at most down to chin level so the torso is
+    excluded.
+
+    Two measures because webcams blur the background: an out-of-focus office
+    read edge density 0.017 (as low as a plain wall) but luma std 44.7; a
+    plain wall reads std 3.5-20. Edges catch sharp patterns (marble veins),
+    the spread catches soft ones (blurred furniture, a dark doorway).
 
     Model-free approximation of the prototype's rembg/u2netp segmentation:
     the head box is widened generously for hair and headscarves and cut out.
@@ -82,11 +88,11 @@ def background_edge_density(img: np.ndarray, face: Face) -> tuple[float, float]:
     mask[int(max(0, y1 - 0.6 * fh)) : chin, int(max(0, x1 - 0.45 * fw)) : int(min(w, x2 + 0.45 * fw))] = False
     fraction = float(mask.mean())
     if not mask.any():
-        return 0.0, 0.0
+        return 0.0, 0.0, 0.0
     # Low Canny thresholds on purpose: at 40/120 a marble-veined wall from a
     # real webcam frame read 0.019, indistinguishable from a plain wall.
     edges = cv2.Canny(cv2.GaussianBlur(gray, (5, 5), 0), 15, 45) > 0
-    return float(edges[mask].mean()), fraction
+    return float(edges[mask].mean()), float(gray[mask].std()), fraction
 
 
 def assess(
@@ -212,11 +218,12 @@ def assess(
 
     # --- background
     if cfg.background_check != "off":
-        density, fraction = background_edge_density(img, face)
+        density, spread, fraction = background_stats(img, face)
         m["background_fraction"] = round(fraction, 3)
         if fraction >= cfg.min_background_fraction:
             m["background_edge_density"] = round(density, 4)
-            if density > cfg.max_background_edge_density:
+            m["background_luma_std"] = round(spread, 2)
+            if density > cfg.max_background_edge_density or spread > cfg.max_background_luma_std:
                 out.reasons.append(
                     Reason(
                         code="background_not_uniform",

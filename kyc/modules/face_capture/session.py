@@ -56,6 +56,10 @@ class CaptureSession:
     stills_rejected: int = 0
     capture_id: str | None = None
     last_hints: list = field(default_factory=list)
+    # Primary (first) blocking code of each recent frame, for a stable hint.
+    recent_codes: list = field(default_factory=list)
+    shown_hint: str | None = None
+    last_reasons_by_code: list = field(default_factory=list)
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def expired(self, now: float | None = None) -> bool:
