@@ -134,23 +134,31 @@ class FaceQualitySettings(BaseSettings):
     # Horizontal iris offset (mean of both eyes), 0 = centred. Test photos
     # looking at the camera: |offset| <= 0.10; one with the head turned 0.15.
     max_gaze_offset: float = 0.12
+    # Vertical iris position in lid-opening units (more negative = higher).
+    # Test photos looking at the camera: -0.20 to -0.45; one real webcam frame
+    # looking down: -0.15. Interim - set from ONE real sample; calibrate.
+    min_gaze_vertical: float = -0.55
+    max_gaze_vertical: float = -0.17
 
     # --- occlusion (mask, hand, sunglasses) ------------------------------
     occlusion_model: str = "face_occlusion_mnv3.onnx"
     # Raw logit of the prototype's MobileNetV3; below this = covered. The
     # prototype used 0.25, which flagged 4 headscarf faces and 1 bearded face
-    # out of 22 uncovered ones. At -3.0: no uncovered test face flagged, a
-    # real scarf-over-mouth face (-4.28) caught, most synthetic masks MISSED.
-    # A retrained model is needed (spec 02 Q5); this only catches clear cases.
-    min_clear_logit: float = -3.0
+    # out of 22 uncovered ones. -3.0 then let a real webcam frame with a HAND
+    # OVER THE MOUTH through (-2.285). -2.0 catches it; the closest uncovered
+    # test face is -1.92 (headscarf), so the margin is thin and one uncovered,
+    # tilted headscarf photo (-2.34) is now flagged. Interim: the model cannot
+    # separate these reliably at any threshold - it needs retraining (Q5/Q9).
+    min_clear_logit: float = -2.0
 
     # --- background ----------------------------------------------------
-    # Edge density beside/above the head. Plain backgrounds measured 0-0.004,
-    # ordinary rooms 0.02-0.17, so nearly every selfie at home is "not
-    # uniform". off | info | warn | error - info shows the hint without
-    # blocking capture; set error only for passport-style requirements.
-    background_check: Literal["off", "info", "warn", "error"] = "info"
-    max_background_edge_density: float = 0.02
+    # Edge density (Canny 15/45) beside/above the head. Plain walls measured
+    # 0-0.017, a marble-veined wall from a real webcam frame 0.055, ordinary
+    # rooms 0.043-0.20. Blocking by default (team requirement, 2026-10-11):
+    # most selfies taken at home will be asked to move to a plain wall.
+    # off | info | warn | error.
+    background_check: Literal["off", "info", "warn", "error"] = "error"
+    max_background_edge_density: float = 0.03
     min_background_fraction: float = Field(0.05, description="Below this much visible background, skip the check")
 
     # --- session -------------------------------------------------------

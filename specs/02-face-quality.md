@@ -321,3 +321,25 @@ wrongly blocked, and the metric ranges to pick thresholds from.
 
 Not built yet: retrained occlusion model (Q5), multi-worker session store
 (Redis), threshold calibration on real webcam frames (tooling ready).
+
+### 2026-10-11 — first real webcam test: three checks failed
+
+A selfie was captured with **a hand over the mouth, eyes looking down, in
+front of a marble-veined wall**. All three should have blocked:
+
+| Check | Real frame | Why it passed | Change |
+|---|---|---|---|
+| Occlusion | logit −2.285 | threshold was −3.0; an uncovered headscarf test face scores −2.34, so **no threshold on this model separates the two** | interim −2.0 (catches it; nearest uncovered test face −1.92). The model must be retrained — Q5/Q9 |
+| Mouth | openness 0.029 | landmarks "see" a closed mouth under the hand | none — cover is caught by occlusion, not the mouth check. A lip-redness test was tried and dropped: many uncovered faces score near 0 too |
+| Gaze | horizontal 0.031 | only left/right was measured | vertical iris position added; looking down −0.159 vs −0.19 to −0.42 looking at the camera; window [−0.55, −0.17], **interim, one real sample** |
+| Background | edge density 0.019 | Canny 40/120 doesn't see soft marble veins; and it was info-only | Canny 15/45 (wall 0.055, plain ≤ 0.017), threshold 0.03, **blocking by default** (team requirement) |
+
+Also fixed: the iris locator used a hard "darkest 25%" cut, which selected
+every pixel when the sclera was uniform and returned the outline's centre —
+now a darkness-weighted centroid. And the hint order: the client shows the
+first error, which was "look at the camera" for a covered mouth; blocking
+hints are now ordered with cover first.
+
+Lesson, again: thresholds from still photos did not survive the first live
+frame. Calibration on labelled webcam frames is the next step, not optional.
+

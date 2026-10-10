@@ -19,6 +19,7 @@ from kyc.core.face import detector as det_mod
 from kyc.core.face.detector import Face, FaceDetector
 from kyc.core.face.geometry import (
     EYE_LEFT_IMG,
+    EYE_OUTLINES,
     EYE_RIGHT_IMG,
     MOUTH,
     eye_openness,
@@ -74,13 +75,21 @@ def landmarks_106(eye_open: float = 0.3, mouth_open: float = 0.02) -> np.ndarray
     return pts
 
 
-def textured_frame(brightness: int = 128, blur: float = 0.0, iris_shift: float = 0.0) -> np.ndarray:
-    """Random texture (so sharpness reads as a photo) with a dark iris in each
-    eye, shifted by `iris_shift` eye-widths."""
+def textured_frame(
+    brightness: int = 128, blur: float = 0.0, iris_shift: float = 0.0, iris_drop: float = 0.0
+) -> np.ndarray:
+    """A plain background with a textured face region (so sharpness reads as
+    a photo) and a dark iris in each eye. The iris sits a little above the
+    corner line, as real eyes measure (upper lashes); `iris_shift` moves it
+    sideways in eye-widths, `iris_drop` down in pixels."""
     rng = np.random.default_rng(0)
-    frame = rng.integers(brightness - 40, brightness + 40, (FRAME_H, FRAME_W, 3)).astype(np.uint8)
+    frame = np.full((FRAME_H, FRAME_W, 3), brightness, np.uint8)
+    face = rng.integers(brightness - 40, brightness + 40, (220, 160, 3)).astype(np.uint8)
+    frame[130:350, 240:400] = face
+    for _, outline in EYE_OUTLINES:  # white sclera inside each eye outline
+        cv2.fillPoly(frame, [landmarks_106()[list(outline)].astype(np.int32)], (235, 235, 235))
     for cx, cy in EYE_CENTRES:
-        cv2.circle(frame, (int(cx + 40 * iris_shift), int(cy)), 6, (5, 5, 5), -1)
+        cv2.circle(frame, (int(cx + 40 * iris_shift), int(cy - 3 + iris_drop)), 5, (5, 5, 5), -1)
     if blur:
         frame = cv2.GaussianBlur(frame, (0, 0), blur)
     return frame
@@ -241,7 +250,8 @@ def test_turned_and_tilted_head_block():
 def test_uneven_lighting_is_informational_only():
     frame = textured_frame()
     frame[:, :320] //= 4
-    a = check([make_face()], frame=frame, min_brightness=10)
+    # The darkened half covers one eye; gaze is not what this test is about.
+    a = check([make_face()], frame=frame, min_brightness=10, min_gaze_vertical=-9, max_gaze_vertical=9)
     assert "uneven_lighting" in codes(a.reasons)
     assert a.ok
 
@@ -263,8 +273,10 @@ def test_iris_offset_follows_the_dark_pupil():
 
     centred = iris_offsets(gray(textured_frame()), landmarks_106())
     right = iris_offsets(gray(textured_frame(iris_shift=0.3)), landmarks_106())
-    assert all(abs(v) < 0.08 for v in centred)
-    assert all(v > 0.15 for v in right)
+    down = iris_offsets(gray(textured_frame(iris_drop=6)), landmarks_106())
+    assert all(abs(h) < 0.08 for h, _ in centred)
+    assert all(h > 0.15 for h, _ in right)
+    assert all(v_down > v + 0.2 for (_, v), (_, v_down) in zip(centred, down, strict=True))
 
 
 def test_open_mouth_blocks():
@@ -276,22 +288,32 @@ def test_gaze_off_centre_blocks():
     assert "gaze_off_center" in codes(check([make_face()], frame=textured_frame(iris_shift=0.3)).reasons)
 
 
+def test_looking_down_blocks():
+    assert "gaze_off_center" in codes(check([make_face()], frame=textured_frame(iris_drop=6)).reasons)
+
+
+def test_cover_is_the_first_hint_shown():
+    a = check([make_face()], frame=textured_frame(iris_shift=0.3), logit=-4.0, mouth_open=0.3)
+    assert a.reasons[0].code == "face_occluded"
+
+
 def test_occlusion_threshold():
     assert "face_occluded" not in codes(check([make_face()], logit=-1.0).reasons)  # headscarf-like score
     assert "face_occluded" in codes(check([make_face()], logit=-4.3).reasons)
 
 
-def test_background_check_severity_is_configurable():
+def test_background_check_blocks_by_default_and_is_configurable():
     busy = textured_frame()
-    for x in range(0, FRAME_W, 24):  # shelves / patterned wall: strong edges everywhere
+    for x in range(0, FRAME_W, 24):  # shelves / patterned wall behind the head
         cv2.line(busy, (x, 0), (x, FRAME_H), (250, 250, 250), 3)
+    busy[130:350, 240:400] = textured_frame()[130:350, 240:400]
     plain = np.full((FRAME_H, FRAME_W, 3), 180, np.uint8)
     plain[130:350, 240:400] = textured_frame()[130:350, 240:400]
     face = make_face()
-    assert background_edge_density(plain, face)[0] < 0.02
-    info = check([face], frame=busy)
+    assert background_edge_density(plain, face)[0] < 0.03
+    assert not check([face], frame=busy).ok  # default: error (team requirement)
+    info = check([face], frame=busy, background_check="info")
     assert "background_not_uniform" in codes(info.reasons) and info.ok
-    assert not check([face], frame=busy, background_check="error").ok
     assert "background_not_uniform" not in codes(check([face], frame=busy, background_check="off").reasons)
 
 

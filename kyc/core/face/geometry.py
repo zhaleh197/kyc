@@ -122,16 +122,21 @@ EYE_OUTLINES = (
 )
 
 
-def iris_offsets(gray: np.ndarray, points: np.ndarray, dark_fraction: float = 0.25) -> list[float]:
-    """Horizontal iris position in each eye: 0 = centred, +-0.5 = at a corner.
+def iris_offsets(gray: np.ndarray, points: np.ndarray) -> list[tuple[float, float]]:
+    """(horizontal, vertical) iris position in each eye.
+
+    Horizontal: along the corner-to-corner axis, in eye widths; 0 = centred,
+    +-0.5 = at a corner. Vertical: perpendicular to that axis, in units of
+    the lid opening; more negative = higher. Looking at the camera measured
+    -0.20 to -0.45 on the test photos (the dark upper lashes pull the
+    centroid up); a real webcam frame looking down read -0.15.
 
     2d106det's "pupil" points (38, 88) do NOT follow the iris - moving the iris
     in a photo by 0.2 eye-widths left them where they were - so the iris is
-    located directly: the centroid of the darkest `dark_fraction` of pixels
-    inside the eye outline. On the same synthetic test this tracked the move
-    (+-0.13 for +-0.2). Vertical gaze is not estimated; eyelids dominate it.
+    located directly: the darkness-weighted centroid inside the eye outline.
+    Moving the iris by +-0.2 eye-widths in a real photo moved this by +-0.1.
     """
-    out: list[float] = []
+    out: list[tuple[float, float]] = []
     for (c1, c2), outline in EYE_OUTLINES:
         x0, y0 = np.floor(points[list(outline)].min(0)).astype(int)
         x1, y1 = np.ceil(points[list(outline)].max(0)).astype(int) + 1
@@ -144,11 +149,24 @@ def iris_offsets(gray: np.ndarray, points: np.ndarray, dark_fraction: float = 0.
         values = region[mask > 0]
         if values.size < 20:
             continue
-        ys, xs = np.nonzero((mask > 0) & (region <= np.quantile(values, dark_fraction)))
-        centre = np.array([xs.mean() + x0, ys.mean() + y0])
+        # Darkness-weighted centroid: each pixel counts by how much darker it
+        # is than the eye's median. A hard "darkest N%" cut selected every
+        # pixel when the sclera was uniform (its value tied the cut) and
+        # returned the outline's centre whatever the iris did.
+        weights = np.where(mask > 0, np.clip(np.median(values) - region.astype(np.float32), 0, None), 0)
+        total = float(weights.sum())
+        if total <= 0:
+            continue
+        ys, xs = np.mgrid[: region.shape[0], : region.shape[1]]
+        centre = np.array([(xs * weights).sum() / total + x0, (ys * weights).sum() / total + y0])
         a, b = points[c1], points[c2]
         width = float(np.linalg.norm(b - a))
         if width <= 1e-6:
             continue
-        out.append(float(np.dot(centre - (a + b) / 2, (b - a) / width) / width))
+        axis = (b - a) / width
+        normal = np.array([-axis[1], axis[0]])
+        upper, lower = points[outline[2]], points[outline[6]]
+        opening = max(float(np.linalg.norm(upper - lower)), 1e-3)
+        offset = centre - (a + b) / 2
+        out.append((float(np.dot(offset, axis) / width), float(np.dot(offset, normal) / opening)))
     return out

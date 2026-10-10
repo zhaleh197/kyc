@@ -20,6 +20,16 @@ from kyc.core.schemas import Reason, Severity
 
 CROP_SIZE = 256
 
+# Order in which blocking hints are shown: the client displays the first one,
+# so it must be the thing the user should fix first. A hand over the mouth
+# also confuses landmarks (the mouth reads "closed", the gaze off), so cover
+# comes before anything measured from landmarks.
+HINT_PRIORITY = (
+    "no_face", "multiple_faces", "face_occluded", "face_cut_off", "face_too_small", "face_too_large",
+    "face_off_center", "face_too_dark", "face_too_bright", "face_blurry", "head_turned", "head_tilted",
+    "eyes_closed", "mouth_open", "gaze_off_center", "face_too_close_for_context", "background_not_uniform",
+)
+
 
 @dataclass
 class FrameAssessment:
@@ -73,7 +83,9 @@ def background_edge_density(img: np.ndarray, face: Face) -> tuple[float, float]:
     fraction = float(mask.mean())
     if not mask.any():
         return 0.0, 0.0
-    edges = cv2.Canny(cv2.GaussianBlur(gray, (5, 5), 0), 40, 120) > 0
+    # Low Canny thresholds on purpose: at 40/120 a marble-veined wall from a
+    # real webcam frame read 0.019, indistinguishable from a plain wall.
+    edges = cv2.Canny(cv2.GaussianBlur(gray, (5, 5), 0), 15, 45) > 0
     return float(edges[mask].mean()), fraction
 
 
@@ -174,10 +186,16 @@ def assess(
 
         offsets = iris_offsets(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), landmarks)
         if offsets:
-            m["gaze_offset"] = round(float(np.mean(offsets)), 4)
+            horizontal, vertical = np.mean(offsets, axis=0)
+            m["gaze_offset"] = round(float(horizontal), 4)
+            m["gaze_vertical"] = round(float(vertical), 4)
             # Only meaningful with the head roughly frontal; a turned head
             # already has its own hint.
-            if abs(m["gaze_offset"]) > cfg.max_gaze_offset and abs(yaw) <= cfg.max_yaw_deg:
+            head_ok = abs(yaw) <= cfg.max_yaw_deg and abs(pitch) <= cfg.max_pitch_deg
+            off_centre = abs(horizontal) > cfg.max_gaze_offset or not (
+                cfg.min_gaze_vertical <= vertical <= cfg.max_gaze_vertical
+            )
+            if head_ok and off_centre:
                 out.reasons.append(_err("gaze_off_center", "Not looking at the camera", "مستقیم به دوربین نگاه کنید"))
 
     # --- occlusion
@@ -208,6 +226,8 @@ def assess(
                     )
                 )
 
+    rank = {code: i for i, code in enumerate(HINT_PRIORITY)}
+    out.reasons.sort(key=lambda r: (r.severity.value != "error", rank.get(r.code, len(rank))))
     return out
 
 
