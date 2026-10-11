@@ -362,3 +362,10 @@ background (dark doorway, bright wall). Changes:
   stays until another one does or the frames come back clean. The page also
   holds each message at least 1.5 s.
 
+**Open (2026-10-11):** the room background was correctly rejected on a real
+frame, but the *acceptance* side — a real plain wall at home, with its
+shadows and light falloff, staying under std 30 — has not been tested on a
+webcam yet. Assumed to work for now (team decision); verify before relying
+on `background_check=error` in production, and raise
+`max_background_luma_std` if plain walls are refused.
+
