@@ -31,6 +31,12 @@
   pre { direction:ltr; text-align:left; font-size:11px; background:#f3f4f7; padding:8px; border-radius:8px; max-height:220px; overflow:auto; white-space:pre-wrap; }
   .muted { color:var(--muted); font-size:12px; }
   label { font-size:13px; }
+  .pair { display:flex; gap:10px; margin-top:10px; align-items:flex-start; }
+  .pair figure { margin:0; flex:1; text-align:center; font-size:12px; color:var(--muted); }
+  .pair img { width:100%; max-height:220px; object-fit:contain; background:#111; border-radius:8px; }
+  .verdict { margin-top:10px; padding:12px; border-radius:10px; font-size:16px; background:#eef1f5; }
+  .verdict.pass { background:#e6f4ec; color:var(--ok); } .verdict.review { background:#fdf3e1; color:var(--warn); }
+  .verdict.fail { background:#fbeaea; color:var(--err); }
 </style>
 </head>
 <body>
@@ -50,6 +56,17 @@
       <button id="stop" disabled>توقف</button>
       <span class="muted" id="rate"></span>
     </div>
+
+    <h2 style="margin-top:20px">مقایسه با کارت ملی (face match)</h2>
+    <p class="muted">بعد از گرفتن سلفی، عکس <b>کارت ملی</b> را انتخاب کنید. OCR عکس روی کارت را جدا می‌کند و با سلفی‌ای که سرور نگه داشته (<code>capture_id</code>) مقایسه می‌شود. این ورودی فقط برای کارت است؛ سلفی فقط از دوربین می‌آید.</p>
+    <div class="row">
+      <label>عکس کارت ملی: <input type="file" id="card" accept="image/*" disabled></label>
+    </div>
+    <div class="pair" id="pair" style="display:none">
+      <figure><img id="cardPortrait" alt=""><figcaption>عکس روی کارت</figcaption></figure>
+      <figure><img id="selfieThumb" alt=""><figcaption>سلفی گرفته‌شده</figcaption></figure>
+    </div>
+    <div class="verdict" id="verdict" style="display:none"></div>
   </section>
 
   <section>
@@ -103,6 +120,7 @@
     if (text !== shownText) { shownText = text; shownAt = now; }
     hint.className = cls; hint.textContent = text;
   }
+  let captureId = null, selfieB64 = null;
   let stream = null, sessionId = null, running = false, lastJpeg = null, savedCount = 0, sent = 0, t0 = 0;
 
   async function api(path, opts = {}) {
@@ -174,6 +192,8 @@
     const result = await api(`/v1/face-capture/sessions/${sessionId}/result?include_selfie=true`);
     const shown = { ...result, data: { ...result.data, selfie_base64: result.data.selfie_base64 ? "(shown on the left)" : null } };
     $("result").textContent = JSON.stringify(shown, null, 2);
+    captureId = result.data.capture_id; selfieB64 = result.data.selfie_base64;
+    $("card").disabled = !captureId;
     if (result.data.selfie_base64) {
       selfieImg.src = "data:image/jpeg;base64," + result.data.selfie_base64;
       selfieImg.style.display = "block"; video.style.display = "none";
@@ -183,6 +203,8 @@
 
   async function start() {
     $("result").textContent = "—"; selfieImg.style.display = "none"; video.style.display = "block";
+    captureId = null; selfieB64 = null; $("card").disabled = true; $("card").value = "";
+    $("pair").style.display = "none"; $("verdict").style.display = "none";
     try {
       stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
     } catch (e) {
@@ -216,6 +238,39 @@
     $("saved").textContent = `${savedCount} فریم ذخیره شد (آخرین برچسب: ${label})`;
   }
 
+  const VERDICT_FA = { pass: "✅ مطابقت دارد", review: "⚠️ نیاز به بررسی دستی", fail: "❌ مطابقت ندارد" };
+
+  async function matchCard(file) {
+    const v = $("verdict");
+    v.className = "verdict"; v.style.display = "block"; v.textContent = "در حال خواندن کارت…";
+    try {
+      const fd = new FormData(); fd.append("file", file, file.name); fd.append("return_portrait", "true");
+      const ocr = await api("/v1/ocr/document", { method: "POST", body: fd });
+      const portrait = ocr.data.portrait_base64;
+      if (!portrait) {
+        const why = ocr.reasons.filter((r) => r.severity === "error").map((r) => r.message_fa).join("، ");
+        v.className = "verdict fail"; v.textContent = "عکس روی کارت پیدا نشد" + (why ? ": " + why : ""); return;
+      }
+      $("cardPortrait").src = "data:image/jpeg;base64," + portrait;
+      $("selfieThumb").src = "data:image/jpeg;base64," + selfieB64;
+      $("pair").style.display = "flex";
+      v.textContent = "در حال مقایسه…";
+      const m = await api("/v1/face-match/verify/base64", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reference_base64: portrait, capture_id: captureId }),
+      });
+      const sim = m.data.similarity, t = m.data.thresholds;
+      v.className = "verdict " + m.decision;
+      v.innerHTML = `${VERDICT_FA[m.decision]} — شباهت <b>${sim === null ? "—" : sim.toFixed(3)}</b>
+        <div class="muted">قبول ≥ ${t.accept_above} · رد &lt; ${t.reject_below}${m.reasons.length ? " · " + m.reasons.map((r) => r.message_fa).join("، ") : ""}</div>`;
+      $("result").textContent = JSON.stringify(m, null, 2);
+    } catch (e) {
+      v.className = "verdict fail";
+      v.textContent = e.status === 404 ? "سلفی منقضی شده؛ دوباره سلفی بگیرید." : "خطا: " + e.message;
+    }
+  }
+
+  $("card").onchange = (e) => { if (e.target.files[0]) matchCard(e.target.files[0]); };
   $("start").onclick = start;
   $("stop").onclick = () => stopCamera();
   $("save").onclick = saveFrames;

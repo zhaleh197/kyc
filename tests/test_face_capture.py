@@ -540,7 +540,13 @@ def test_dev_page_exists_only_in_debug(monkeypatch):
     page = TestClient(_app_with_debug(monkeypatch, True)).get("/dev/face-capture")
     assert page.status_code == 200
     assert "/v1/face-capture/sessions" in page.text
-    assert 'type="file"' not in page.text  # camera only - no upload control
+    # The only file input is the ID card for face match; the selfie comes
+    # from the camera alone.
+    import re
+
+    inputs = re.findall(r'<input[^>]*type="file"[^>]*>', page.text)
+    assert len(inputs) == 1 and 'id="card"' in inputs[0]
+    assert "/v1/face-match/verify" in page.text
 
 
 def test_metrics_are_in_feedback_only_in_debug():
