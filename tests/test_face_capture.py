@@ -507,7 +507,9 @@ def test_api_check_never_issues_a_capture_id(client):
 
 def test_no_route_accepts_a_selfie_file_outside_a_session():
     paths = TestClient(app).get("/openapi.json").json()["paths"]
-    face_posts = [p for p, ops in paths.items() if "face" in p and "post" in ops]
+    # Face match (/v1/face-match) takes the ID-card portrait, never a selfie;
+    # tests/test_face_match.py checks its fields.
+    face_posts = [p for p, ops in paths.items() if p.startswith(("/v1/face-capture", "/v1/face-quality")) and "post" in ops]
     assert set(face_posts) == {
         "/v1/face-capture/sessions",
         "/v1/face-capture/sessions/{session_id}/frames",

@@ -1,6 +1,6 @@
 # 03 — Face matching (document portrait vs selfie)
 
-Status: **up-front spec**. Prototype: `phase2_facematch/facematching.py`
+Status: **in progress** (branch `face-match`, 2026-10-11): `kyc/modules/face_match/` — card portrait vs `capture_id`, thresholds proposed from repo data, see §12. Originally an up-front spec. Prototype: `phase2_facematch/facematching.py`
 (InsightFace `buffalo_l`, `POST /compare`). A second variant exists in
 `phase1_facedetect/claude_api/main.py` (`/kyc/face-match`).
 
@@ -185,3 +185,42 @@ chosen thresholds in the manifest.
 - **Before commercial launch:** settle the `buffalo_l` licence (deferred 2026-10-06; see §5).
 - Retain embeddings? They are biometric data; default is **no** — compute,
   compare, discard.
+
+## 12. Build log (2026-10-11)
+
+Built: `POST /v1/face-match/verify` (multipart `reference` + `capture_id`, and
+`/verify/base64`). The probe is only a `capture_id` — the selfie the
+face-capture module approved and kept; there is no selfie upload field (a
+test enforces it). Reuses `kyc/core/face/` (SCRFD + ArcFace, buffalo_l).
+
+Assumptions checked (§8):
+
+- **2 — the OCR portrait crop is detectable: yes, with a margin.** On the
+  46 real val/test cards, SCRFD found the face in **46/46** once a 30% black
+  margin was added (faces touching the crop edge are missed without it).
+  On Roboflow's augmented training images (rotated, noise) 128/461 failed;
+  a rotation fallback (±90/180, then ±30…150°) recovered 85 of them. Cards are
+  not rectified before OCR, so a real card photographed sideways needs this.
+  Card-portrait faces: 36–400 px tall, median 160.
+- **3 — grayscale: no gain** (0.44 → 0.43 on a genuine pair). Kept color.
+- **1 — paired dataset: partial.** The repo's card set contains the cards of
+  people who also appear in the test selfies. Assuming the matches below are
+  the same people (**to be confirmed by the team**):
+
+| Pair | Similarity |
+|---|---|
+| Card vs phone selfie, person B | 0.64–0.73 |
+| Card vs phone selfie, person A | 0.42–0.68 |
+| Card vs webcam selfie, the tester (real val/test cards) | 0.38–0.44 |
+| same, with a hand over the mouth | 0.25–0.30 |
+| Two webcam selfies of the tester | 0.69 |
+| Selfies vs other people's real cards | ≤ 0.22 (median ≈ 0.04) |
+| Card vs card, different people (augmented set, duplicates grouped) | p99 0.19, p99.9 0.31 |
+
+**Card-vs-selfie scores far lower than selfie-vs-selfie** — the 0.45 used
+by the prototype would have sent the tester to review. Proposed:
+`accept_above` 0.40, `reject_below` 0.25, review between. Not yet an M1-grade
+measurement: tens of pairs, labels assumed, one webcam.
+
+Also found: the dataset holds many exact copies of the same card
+(`-Copy`, similarity 1.0) — any future eval must group by identity first.

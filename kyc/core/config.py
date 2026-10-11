@@ -188,6 +188,43 @@ class FaceQualitySettings(BaseSettings):
     selfie_jpeg_quality: int = 95
 
 
+class FaceMatchSettings(BaseSettings):
+    """1:1 face verification, ID-card portrait vs the captured selfie.
+    See specs/03-face-match.md.
+
+    Thresholds are cosine similarities of buffalo_l ArcFace embeddings and
+    mean nothing for another embedding model. They are PROPOSED, from a small
+    look at the repo's data (2026-10-11): card-vs-selfie pairs believed to be
+    the same person scored 0.42-0.73 (0.33 with a hand over the mouth);
+    card-vs-card pairs of different people p99 0.19, p99.9 0.31. Two selfies
+    of the same person scored 0.69 - card portraits score much lower, so
+    selfie-vs-selfie thresholds must not be reused here.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="KYC_FACE_MATCH_", env_file=".env", extra="ignore")
+
+    detector_model: str = "buffalo_l_det_10g.onnx"
+    embedding_model: str = "buffalo_l_w600k_r50.onnx"
+    detector_conf: float = 0.5
+
+    # Real (non-augmented) val/test cards vs webcam selfies: believed same
+    # person 0.38-0.44, different people <= 0.22 (card-vs-card p99.9 0.31).
+    # 0.45 (the prototype's level) would send that genuine user to review.
+    # Grayscale on both sides was tried and did not help (0.44 -> 0.43).
+    accept_above: float = Field(0.40, description="Similarity at or above this passes")
+    reject_below: float = Field(0.25, description="Similarity below this fails; in between goes to review")
+
+    # Card portraits are small: the OCR crop's face measured 36-400 px tall
+    # (median 160). Below this the embedding is unreliable.
+    min_reference_face_px: int = 40
+    # SCRFD misses faces that touch the crop edge or are rotated (a card
+    # photographed at an angle - OCR does not rectify). A margin found the
+    # face in 46/46 real test/val portraits; rotations recovered 85 of 130
+    # failures on Roboflow's augmented (rotated) training images.
+    reference_margin: float = 0.3
+    rotation_fallback: bool = True
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="KYC_", env_file=".env", extra="ignore")
 
@@ -206,6 +243,7 @@ class Settings(BaseSettings):
 
     ocr: OcrSettings = Field(default_factory=OcrSettings)
     face_quality: FaceQualitySettings = Field(default_factory=FaceQualitySettings)
+    face_match: FaceMatchSettings = Field(default_factory=FaceMatchSettings)
 
     def model_path(self, name: str) -> Path:
         return self.models_dir / name

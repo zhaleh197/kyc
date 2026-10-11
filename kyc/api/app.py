@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse
 from kyc.core.config import get_settings
 from kyc.core.errors import KycError
 from kyc.modules.face_capture.router import router as face_capture_router
+from kyc.modules.face_match.router import router as face_match_router
 from kyc.modules.ocr.router import router as ocr_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -55,10 +56,11 @@ def create_app() -> FastAPI:
 
     @app.get("/health", tags=["ops"])
     def health() -> dict:
-        return {"status": "ok", "modules": ["ocr", "face_quality"]}
+        return {"status": "ok", "modules": ["ocr", "face_quality", "face_match"]}
 
     app.include_router(ocr_router)
     app.include_router(face_capture_router)
+    app.include_router(face_match_router)
     if settings.debug:
         from kyc.api.dev import router as dev_router
 
