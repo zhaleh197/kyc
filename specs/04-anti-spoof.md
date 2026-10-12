@@ -195,3 +195,20 @@ page shows the result right after capture so attacks can be tried live.
 
 Still open: labelled attack set and APCER/BPCER (S1–S3); running on liveness
 frames (05) as well as the still.
+
+### 2026-10-13 — first live attack test (team, dev page, webcam)
+
+| Test | Expected | Result |
+|---|---|---|
+| Tester's own face | pass | ✅ pass |
+| **Tester's photo shown on a phone screen** to the webcam | fail | ✅ **spoof detected** |
+| Printed photo | fail | **not tested** (no print available) |
+
+`IMG_20251203_135544.jpg` (0.97) and `IMG_20251221_152844_151.jpg` (0.99)
+from `spoofimagetest`: the team does not remember their labels but believes
+they are live — consistent with the scores. The rest of that folder remains
+unlabelled.
+
+**Status: first version done** — screen replay caught on a real test.
+Before production: a printed-photo test, more devices/screens, and a
+labelled attack set for APCER/BPCER (S1–S3).
