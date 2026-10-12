@@ -31,6 +31,8 @@ EXPECTED = {
     "mouth_open": ("mouth_open", "mouth_openness", "higher = more open"),
     "gaze_left": ("gaze_off_center", "gaze_offset_abs", "higher = further off-centre"),
     "gaze_right": ("gaze_off_center", "gaze_offset_abs", "higher = further off-centre"),
+    "gaze_down": ("gaze_off_center", "gaze_vertical", "higher (less negative) = lower gaze"),
+    "gaze_up": ("gaze_off_center", "gaze_vertical", "lower (more negative) = higher gaze"),
     "head_turned": ("head_turned", "yaw_abs", "degrees"),
     "head_up": ("head_turned", "pitch", "degrees, + = chin up"),
     "head_down": ("head_turned", "pitch", "degrees, - = chin down"),
