@@ -243,3 +243,24 @@ different-person pair came near. **Set: `accept_above` 0.30, `reject_below`
 0.25.** At 0.30: 0/1636 impostors above, 1/8 genuine below (the covered-mouth
 frame, which capture now rejects). Still one identity — re-measure with more
 people before production (M1).
+
+### 2026-10-12 — a sibling's card passed: threshold raised to 0.45
+
+Real tests through the full flow (capture → OCR portrait → match):
+
+| Card | Similarity | At 0.30 | At 0.45 |
+|---|---|---|---|
+| The tester's own card | 0.57 | pass | **pass** |
+| **The tester's sister's card** (the team says they do not look alike) | **0.36** | **pass — false accept** | review |
+| Other people in the dataset | — | fail | fail |
+
+Lesson: thresholds measured on **strangers** (max 0.235 over 1636 pairs) are
+not a security measurement. The realistic attack on an ID-card KYC is a
+relative's card, and relatives score far higher than strangers. The pass
+line now sits above the one relative pair we have; relatives land in manual
+review. The earlier genuine range 0.38–0.44 came from low-resolution
+screenshot crops; a real capture scored 0.57.
+
+**Required before production (extends M1/M2):** an evaluation set with
+*hard impostors* — siblings, parents/children, same-sex same-age look-alikes —
+with consent, and FMR reported on that set separately from strangers.

@@ -211,14 +211,16 @@ class FaceMatchSettings(BaseSettings):
     embedding_model: str = "buffalo_l_w600k_r50.onnx"
     detector_conf: float = 0.5
 
-    # Measured 2026-10-12 on LABELLED pairs (team confirmed which cards are
-    # the tester's): the tester's 4 selfies vs 409 other people's card
-    # portraits - 1636 different-person pairs - all below 0.235 (p99 0.218).
-    # Same person, real cards: 0.257-0.521, median 0.40 (0.257-0.302 with a
-    # hand over the mouth). 0.40 would have sent half the genuine pairs to
-    # review. One identity only - re-measure with more people.
-    # Grayscale on both sides was tried and did not help (0.44 -> 0.43).
-    accept_above: float = Field(0.30, description="Similarity at or above this passes")
+    # 2026-10-12, real tests through the full capture flow: the tester's own
+    # card 0.57 (pass); her SISTER's card 0.36 - and at the earlier 0.30 that
+    # passed. Strangers (1636 pairs) all scored < 0.235, which is why 0.30
+    # looked safe: strangers are the easy case. The realistic KYC attack is a
+    # relative's card, so the pass line must sit above relatives: 0.45. The
+    # sister's card now goes to manual review instead of passing.
+    # (The earlier genuine 0.38-0.44 came from low-resolution screenshot
+    # crops, not real captures.) One sibling pair - collect more relatives /
+    # look-alikes before trusting this (spec 03 §12).
+    accept_above: float = Field(0.45, description="Similarity at or above this passes")
     reject_below: float = Field(0.25, description="Similarity below this fails; in between goes to review")
 
     # Card portraits are small: the OCR crop's face measured 36-400 px tall

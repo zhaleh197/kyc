@@ -91,7 +91,8 @@ def codes(result) -> set[str]:
     ("similarity", "decision", "code"),
     [
         (0.70, Decision.PASS, None),
-        (0.3001, Decision.PASS, None),  # just above the threshold
+        (0.4501, Decision.PASS, None),  # just above the threshold
+        (0.36, Decision.REVIEW, "faces_match_uncertain"),  # the sibling pair from the real test
         (0.27, Decision.REVIEW, "faces_match_uncertain"),
         (0.10, Decision.FAIL, "faces_do_not_match"),
     ],
