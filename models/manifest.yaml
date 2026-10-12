@@ -256,3 +256,39 @@ artifacts:
       Only catches confident cases. Needs retraining on a set that includes
       headscarves and beards as NEGATIVES (uncovered), plus masks, hands and
       sunglasses as positives - spec 02 Q5.
+
+  # ------------------------------------------------------------------ anti-spoof
+  # Minivision Silent-Face-Anti-Spoofing (Apache-2.0), weights vendored in
+  # phase3-antispoof/resources/anti_spoof_models/, exported 2026-10-12 by
+  # scripts/export_antispoof_onnx.py (opset 17). Not trained here.
+  # Input contract read from the upstream code: 80x80 context crop, BGR,
+  # raw 0-255 floats (upstream ToTensor does NOT divide by 255). Output: 3
+  # logits; softmax class 1 = real, 0 and 2 = spoof types.
+
+  - name: antispoof_minifasnet_v2_s2.7.onnx
+    module: antispoof
+    task: passive anti-spoof, face box x2.7 context
+    source: phase3-antispoof/resources/anti_spoof_models/2.7_80x80_MiniFASNetV2.pth
+    license: Apache-2.0 (Silent-Face-Anti-Spoofing)
+    sha256: ad4f76e80d1acc29d009251a1d37ce7dd158c3a105ceae8376b9d5564f7cfef8
+    parity: max |torch - onnx| 1.9e-06 on random input
+
+  - name: antispoof_minifasnet_v1se_s4.0.onnx
+    module: antispoof
+    task: passive anti-spoof, face box x4.0 context
+    source: phase3-antispoof/resources/anti_spoof_models/4_0_0_80x80_MiniFASNetV1SE.pth
+    license: Apache-2.0 (Silent-Face-Anti-Spoofing)
+    sha256: 6045f723ec8006b84612fec17e88f57505203935c0cc93be0ec2db491906794b
+    parity: max |torch - onnx| 1.8e-06 on random input
+    validation:
+      note: >
+        First look, both models together, mean over a 3x3 box-jitter grid
+        (2026-10-12): the tester's webcam frames 0.988 / 0.879 (close-up);
+        prototype samples real_1 0.999, spoof_1 0.415, m-/m-- 0.000, others
+        0.06-0.99 - labels of phase3-antispoof/spoofimagetest not yet
+        confirmed by the team. No APCER/BPCER yet (spec 04 S1-S3).
+    known_limitations: >
+      Borderline scores move with the face box (one image 0.001-0.456 with
+      the box shifted/scaled 10%) - hence the jitter averaging. On normal
+      selfies the 2.7x/4.0x context is almost always clamped by the frame
+      edge, so the models usually see less context than in training.

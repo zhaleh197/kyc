@@ -234,6 +234,33 @@ class FaceMatchSettings(BaseSettings):
     rotation_fallback: bool = True
 
 
+class AntiSpoofSettings(BaseSettings):
+    """Passive anti-spoofing (print / screen replay) on the captured selfie.
+    See specs/04-anti-spoof.md.
+
+    Models: Minivision's MiniFASNetV2 (2.7x face context) and MiniFASNetV1SE
+    (4.0x), exported to ONNX by scripts/export_antispoof_onnx.py. The live
+    score is P(class 1 = real), averaged over both models and a small grid of
+    box jitters. Thresholds are PROPOSED: the prototype used 0.9; first look
+    (2026-10-12): the tester's webcam frames 0.96-0.99, the prototype's
+    real_1.png 0.998, spoof_1.png 0.46.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="KYC_ANTISPOOF_", env_file=".env", extra="ignore")
+
+    models: list[str] = Field(
+        default_factory=lambda: ["antispoof_minifasnet_v2_s2.7.onnx:2.7", "antispoof_minifasnet_v1se_s4.0.onnx:4.0"],
+        description="'<file>:<context scale>' per model",
+    )
+    accept_above: float = Field(0.90, description="Live score at or above this passes")
+    reject_below: float = Field(0.50, description="Live score below this fails; in between goes to review")
+    # Borderline scores moved a lot with the face box: one image read
+    # 0.001-0.456 with the box shifted/scaled by 10%. Averaging over that
+    # grid makes the score depend less on which detector drew the box.
+    box_jitter: float = Field(0.10, description="Relative size/shift of the box-jitter grid; 0 disables")
+    max_model_disagreement: float = Field(0.6, description="Reported when the two models differ by more")
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="KYC_", env_file=".env", extra="ignore")
 
@@ -253,6 +280,7 @@ class Settings(BaseSettings):
     ocr: OcrSettings = Field(default_factory=OcrSettings)
     face_quality: FaceQualitySettings = Field(default_factory=FaceQualitySettings)
     face_match: FaceMatchSettings = Field(default_factory=FaceMatchSettings)
+    antispoof: AntiSpoofSettings = Field(default_factory=AntiSpoofSettings)
 
     def model_path(self, name: str) -> Path:
         return self.models_dir / name

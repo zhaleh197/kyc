@@ -1,6 +1,6 @@
 # 04 — Passive anti-spoofing (presentation attack detection)
 
-Status: **up-front spec**. Prototype: `phase3-antispoof/` (commit `bc1ef49`).
+Status: **in progress** (branch `anti-spoof`, 2026-10-12): `kyc/modules/antispoof/`, `POST /v1/antispoof/verify` on a `capture_id`; thresholds proposed, see §12. Prototype: `phase3-antispoof/` (commit `bc1ef49`).
 
 ## 1. Purpose
 
@@ -170,3 +170,28 @@ uses the minimum. Eval (manual): APCER/BPCER per attack type, in the manifest.
   people — needs their consent and a storage rule.
 - If the client app (not a browser) is planned, raise JPEG quality /
   resolution for capture there; it directly affects this module.
+
+## 12. Build log (2026-10-12)
+
+Built per §3: both MiniFASNet models exported to ONNX (parity with torch
+≈ 2e-6); live score = mean over both models of P(class 1); runs on the
+captured selfie only (`capture_id`), using face capture's SCRFD box; the dev
+page shows the result right after capture so attacks can be tried live.
+
+- **Input contract taken from the upstream code, not assumed:** BGR, raw
+  0–255 (upstream's `ToTensor` does not divide by 255).
+- **§8.2 box source:** RetinaFace (Caffe) cannot run here — OpenCV 5 removed
+  the Caffe importer — so sensitivity was measured instead: confident scores
+  barely move, but borderline ones move a lot when the box is shifted/scaled
+  by 10% (one image 0.001–0.456). **Fix: average over a 3×3 jitter grid**
+  (`box_jitter`, 9 crops × 2 models, ~100 ms per selfie on the dev CPU).
+- **Context is clamped on nearly every selfie** (confirms 02 §12): reported
+  as `context_clamped`, **info** — as a warning it would send everyone to
+  review.
+- First scores: tester's webcam frames 0.988 and 0.879 (the latter a
+  close-up capture now rejects); `real_1` 0.999, `spoof_1` 0.415, `m-`/`m--`
+  0.000; other `spoofimagetest` files 0.06–0.99 — **labels needed from the
+  team**. Proposed: pass ≥ 0.90 (the prototype's level), fail < 0.50.
+
+Still open: labelled attack set and APCER/BPCER (S1–S3); running on liveness
+frames (05) as well as the still.

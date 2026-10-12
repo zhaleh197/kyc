@@ -19,7 +19,7 @@ import cv2
 import numpy as np
 
 from kyc.core.config import Settings, get_settings
-from kyc.core.errors import KycError
+from kyc.core.errors import CaptureNotFound
 from kyc.core.face.detector import Face, FaceDetector
 from kyc.core.face.embedder import FaceEmbedder, cosine
 from kyc.core.imaging import decode_image
@@ -31,13 +31,6 @@ MODULE_VERSION = "0.1.0"
 # Tried in order when no face is found upright: quarter turns first (a card
 # photographed sideways), then common tilts.
 FALLBACK_ANGLES = (90, -90, 180, 30, -30, 60, -60, 120, -120, 150, -150)
-
-
-class CaptureNotFound(KycError):
-    """The capture_id is unknown or the selfie has expired - take a new selfie."""
-
-    code = "capture_not_found"
-    http_status = 404
 
 
 @dataclass

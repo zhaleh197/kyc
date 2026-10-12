@@ -54,6 +54,7 @@
     </div>
     <div class="hint-main" id="hint">برای شروع، «شروع» را بزنید.</div>
     <ul class="hints" id="hints"></ul>
+    <div class="verdict" id="spoofVerdict" style="display:none"></div>
     <details id="checksBox" open style="margin-top:12px">
       <summary><b>بررسی‌ها</b> <span class="muted">(قبل از «شروع» انتخاب کنید؛ فقط در حالت توسعه)</span></summary>
       <p class="muted" style="margin:6px 0 0">«جلوگیری»: تا درست نشود سلفی گرفته نمی‌شود · «فقط پیام»: پیام نشان داده می‌شود ولی سلفی گرفته می‌شود · «خاموش»: بررسی نمی‌شود</p>
@@ -234,6 +235,7 @@
     $("result").textContent = JSON.stringify(shown, null, 2);
     captureId = result.data.capture_id; selfieB64 = result.data.selfie_base64;
     $("card").disabled = !captureId;
+    if (captureId) checkSpoof();
     if (result.data.selfie_base64) {
       selfieImg.src = "data:image/jpeg;base64," + result.data.selfie_base64;
       selfieImg.style.display = "block"; video.style.display = "none";
@@ -244,7 +246,7 @@
   async function start() {
     $("result").textContent = "—"; selfieImg.style.display = "none"; video.style.display = "block";
     captureId = null; selfieB64 = null; $("card").disabled = true; $("card").value = "";
-    $("pair").style.display = "none"; $("verdict").style.display = "none";
+    $("pair").style.display = "none"; $("verdict").style.display = "none"; $("spoofVerdict").style.display = "none";
     try {
       stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
     } catch (e) {
@@ -291,6 +293,25 @@
   }
 
   const VERDICT_FA = { pass: "✅ مطابقت دارد", review: "⚠️ نیاز به بررسی دستی", fail: "❌ مطابقت ندارد" };
+
+  // Anti-spoof runs on the selfie the server kept, right after capture. To
+  // test attacks, hold a printed photo or a phone showing a face to the camera.
+  const SPOOF_FA = { pass: "✅ چهرهٔ زنده", review: "⚠️ زنده بودن قطعی نیست — بررسی دستی", fail: "❌ جعل: عکس چاپی یا صفحه‌نمایش" };
+  async function checkSpoof() {
+    const v = $("spoofVerdict");
+    v.className = "verdict"; v.style.display = "block"; v.textContent = "تشخیص جعل…";
+    try {
+      const r = await api("/v1/antispoof/verify", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ capture_id: captureId }),
+      });
+      const t = r.data.thresholds;
+      v.className = "verdict " + r.decision;
+      v.innerHTML = `تشخیص جعل: ${SPOOF_FA[r.decision]} — امتیاز زنده بودن <b>${r.data.live_score.toFixed(3)}</b>
+        <div class="muted">مدل‌ها: ${r.data.models.map((m) => m.context_scale + "x: " + m.live_score.toFixed(2)).join(" · ")} · قبول ≥ ${t.accept_above} · رد &lt; ${t.reject_below}</div>`;
+    } catch (e) {
+      v.className = "verdict fail"; v.textContent = "تشخیص جعل انجام نشد: " + e.message;
+    }
+  }
 
   async function matchCard(file) {
     const v = $("verdict");

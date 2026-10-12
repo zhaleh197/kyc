@@ -61,3 +61,11 @@ class BackendNotInstalled(KycError):
 class ProfileNotFound(KycError):
     code = "profile_not_found"
     http_status = 404
+
+
+class CaptureNotFound(KycError):
+    """A capture_id is unknown or its selfie has expired - take a new selfie.
+    Shared by every module that works on a captured selfie."""
+
+    code = "capture_not_found"
+    http_status = 404
