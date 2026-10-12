@@ -127,6 +127,22 @@ Checks that run today:
 
 ---
 
+## Testing the selfie flow on a phone
+
+Thresholds must be calibrated on **phone cameras** (what users will have),
+not on a desktop webcam. Phone browsers allow the camera only over HTTPS, so:
+
+```bash
+python -m scripts.dev_https --run
+```
+
+makes a self-signed certificate for this machine's LAN IP in `.data/dev_tls/`
+(git-ignored) and serves the API with `KYC_DEBUG=true` on port 8443. Open the
+printed `https://<ip>:8443/dev/face-capture` on a phone on the same Wi-Fi and
+accept the certificate warning once. Testing only: the debug server is then
+reachable on the local network - stop it when done, and allow it on
+*private* networks only if Windows asks.
+
 ## Models
 
 `models/` is not in version control. With a Kaggle API token the whole training
