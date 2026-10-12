@@ -394,3 +394,23 @@ to choose per check — so blocking is now a setting, not a code decision.
 
 Also fixed: gaze is no longer judged with the eyes closed (the hidden iris
 gave a false "look at the camera"); that is eyes_closed's job.
+
+### 2026-10-13 — gaze: "looking at the screen" cannot be measured; fixed in the UI
+
+A real frame of someone looking down at the screen (not the lens) read
+`gaze_vertical` −0.234 — inside the range of photos looking straight at the
+camera (−0.19 to −0.45). At webcam resolution the eye is 30–40 px wide and
+camera-vs-screen is 10–15° of eye rotation, about a pixel or two of iris
+movement; the iris heuristic catches large glances, not this.
+
+**Decision (team, 2026-10-13):**
+1. **UI:** guidance is shown at the top centre of the screen, right under
+   the webcam, with a "look here" arrow — people look at what they read, so
+   their eyes stay near the lens. **Requirement for every capture client**
+   (web and mobile), not only the dev page.
+2. **Accept a small look at the screen;** the gaze check targets large
+   glances (sideways, up, down), with thresholds to be calibrated on the
+   team's labelled frames (`gaze_left/right/up/down`).
+3. A learned gaze model was considered and not chosen for now (days of work,
+   training-data licences, and still hard at 720p). Revisit only if a
+   passport-style "eyes on the lens" rule becomes a business requirement.

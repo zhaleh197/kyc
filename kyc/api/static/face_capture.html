@@ -20,6 +20,18 @@
   .state { position:absolute; top:10px; right:10px; padding:4px 10px; border-radius:999px; font-size:12px; background:rgba(0,0,0,.6); color:#fff; direction:ltr; }
   .hint-main { margin-top:10px; min-height:48px; padding:12px; border-radius:10px; font-size:17px; background:#eef1f5; }
   .hint-main.ok { background:#e6f4ec; color:var(--ok); } .hint-main.err { background:#fbeaea; color:var(--err); }
+  /* Guidance pinned to the top centre of the screen - right under a laptop
+     webcam - so that reading it keeps the eyes near the lens. Users look at
+     whatever they read; with the hint lower on the page they look at the
+     screen, not the camera, and gaze cannot tell those apart (spec 02 §12). */
+  #lookHere { position:fixed; top:0; left:50%; transform:translateX(-50%); z-index:10; display:none;
+    width:min(560px, calc(100vw - 32px)); padding:6px 14px 10px; border-radius:0 0 14px 14px; text-align:center;
+    background:#1d2330; color:#fff; box-shadow:0 4px 16px rgba(0,0,0,.25); }
+  #lookHere .arrow { font-size:22px; line-height:1; animation: nudge 1.2s ease-in-out infinite; }
+  #lookHere .cam { font-size:12px; opacity:.75; }
+  #lookHere .msg { font-size:18px; margin-top:4px; }
+  #lookHere.ok .msg { color:#7ee2a8; } #lookHere.err .msg { color:#ffb4aa; }
+  @keyframes nudge { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-4px); } }
   ul.hints { list-style:none; padding:0; margin:8px 0 0; font-size:13px; }
   ul.hints li { padding:3px 0; } .sev-error{color:var(--err)} .sev-warn{color:var(--warn)} .sev-info{color:var(--info)}
   .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:12px; }
@@ -43,6 +55,11 @@
 </style>
 </head>
 <body>
+<div id="lookHere" aria-live="polite">
+  <div class="arrow">▲</div>
+  <div class="cam">به دوربین نگاه کنید — همین بالا</div>
+  <div class="msg" id="lookMsg"></div>
+</div>
 <main>
   <section>
     <h1>تست گرفتن سلفی</h1>
@@ -135,6 +152,7 @@
     const hint = $("hint");
     if (text !== shownText) { shownText = text; shownAt = now; }
     hint.className = cls; hint.textContent = text;
+    $("lookHere").className = cls.replace("hint-main", "").trim(); $("lookMsg").textContent = text;
   }
   let captureId = null, selfieB64 = null;
   // Check groups (server: CHECK_GROUPS in kyc/modules/face_capture/quality.py).
@@ -268,11 +286,13 @@
     }
     checkBoxes().forEach((c) => (c.disabled = true));
     running = true; sent = 0; t0 = performance.now();
+    $("lookHere").style.display = "block";
     $("start").disabled = true; $("stop").disabled = false; $("save").disabled = false;
     loop();
   }
 
   function stopCamera(resetHint = true) {
+    $("lookHere").style.display = "none";
     running = false;
     if (stream) stream.getTracks().forEach((t) => t.stop());
     stream = null;
