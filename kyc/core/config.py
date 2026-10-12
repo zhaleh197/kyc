@@ -166,6 +166,11 @@ class FaceQualitySettings(BaseSettings):
     max_background_luma_std: float = 30.0
     min_background_fraction: float = Field(0.05, description="Below this much visible background, skip the check")
 
+    # Check groups switched off for this deployment, e.g. ["background"]
+    # where a plain wall is not required. Names: see CHECK_GROUPS in
+    # kyc/modules/face_capture/quality.py. Only the server sets this.
+    disabled_checks: list[str] = Field(default_factory=list)
+
     # --- hints ---------------------------------------------------------
     # The hint shown to the user changes only when a problem appears in at
     # least `hint_min_count` of the last `hint_window` frames, so it does not
@@ -207,11 +212,14 @@ class FaceMatchSettings(BaseSettings):
     embedding_model: str = "buffalo_l_w600k_r50.onnx"
     detector_conf: float = 0.5
 
-    # Real (non-augmented) val/test cards vs webcam selfies: believed same
-    # person 0.38-0.44, different people <= 0.22 (card-vs-card p99.9 0.31).
-    # 0.45 (the prototype's level) would send that genuine user to review.
+    # Measured 2026-10-12 on LABELLED pairs (team confirmed which cards are
+    # the tester's): the tester's 4 selfies vs 409 other people's card
+    # portraits - 1636 different-person pairs - all below 0.235 (p99 0.218).
+    # Same person, real cards: 0.257-0.521, median 0.40 (0.257-0.302 with a
+    # hand over the mouth). 0.40 would have sent half the genuine pairs to
+    # review. One identity only - re-measure with more people.
     # Grayscale on both sides was tried and did not help (0.44 -> 0.43).
-    accept_above: float = Field(0.40, description="Similarity at or above this passes")
+    accept_above: float = Field(0.30, description="Similarity at or above this passes")
     reject_below: float = Field(0.25, description="Similarity below this fails; in between goes to review")
 
     # Card portraits are small: the OCR crop's face measured 36-400 px tall

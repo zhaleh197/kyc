@@ -20,6 +20,32 @@ from kyc.core.schemas import Reason, Severity
 
 CROP_SIZE = 256
 
+# Checks that can be switched off, by the reason codes they produce. A group
+# is disabled per deployment (KYC_FACE_QUALITY_DISABLED_CHECKS) or, only with
+# KYC_DEBUG=true, per session from the dev page. "no_face" and the still's
+# same-person check are not here on purpose: without them there is no capture.
+CHECK_GROUPS: dict[str, tuple[str, ...]] = {
+    "single_person": ("multiple_faces",),
+    "distance": ("face_too_small", "face_too_large", "face_off_center", "face_cut_off", "face_too_close_for_context"),
+    "lighting": ("face_too_dark", "face_too_bright"),
+    "even_lighting": ("uneven_lighting",),
+    "sharpness": ("face_blurry",),
+    "head_pose": ("head_turned", "head_tilted"),
+    "eyes_open": ("eyes_closed",),
+    "mouth_closed": ("mouth_open",),
+    "gaze": ("gaze_off_center",),
+    "no_cover": ("face_occluded",),
+    "background": ("background_not_uniform",),
+}
+
+
+def drop_disabled(a: FrameAssessment, disabled: frozenset[str]) -> FrameAssessment:
+    """Remove the reasons of disabled check groups (metrics stay reported)."""
+    if disabled:
+        codes = {c for group in disabled for c in CHECK_GROUPS[group]}
+        a.reasons = [r for r in a.reasons if r.code not in codes]
+    return a
+
 # Order in which blocking hints are shown: the client displays the first one,
 # so it must be the thing the user should fix first. A hand over the mouth
 # also confuses landmarks (the mouth reads "closed", the gaze off), so cover

@@ -598,3 +598,57 @@ def test_hint_clears_once_frames_are_clean():
         p.submit_frame(sid, textured_frame(blur=6))
     hints = [p.submit_frame(sid, textured_frame())["primary_hint"] for _ in range(3)]
     assert hints[-1] is None
+
+
+# ------------------------------------------------------------------ check toggles
+
+
+def busy_background_frame():
+    frame = textured_frame()
+    for x in range(0, FRAME_W, 24):
+        cv2.line(frame, (x, 0), (x, FRAME_H), (250, 250, 250), 3)
+    frame[130:350, 240:400] = textured_frame()[130:350, 240:400]
+    return frame
+
+
+def test_switching_checks_off_per_session_is_debug_only():
+    from kyc.modules.face_capture.pipeline import ChecksLocked
+
+    with pytest.raises(ChecksLocked):
+        build().start(["background"])  # production: refused
+    p = build()
+    p.settings.debug = True
+    sid = p.start(["background"]).session_id
+    fb = p.submit_frame(sid, busy_background_frame())
+    assert "background_not_uniform" not in {h["code"] for h in fb["hints"]}
+
+
+def test_a_disabled_check_does_not_block_but_others_still_do():
+    p = build(disabled_checks=["background"])  # deployment-level, set by the server operator
+    sid = p.start().session_id
+    p.submit_frame(sid, busy_background_frame())
+    assert p.submit_frame(sid, busy_background_frame())["state"] == "READY_FOR_STILL"
+    blurry = cv2.GaussianBlur(busy_background_frame(), (0, 0), 6)
+    assert "face_blurry" in {h["code"] for h in p.submit_frame(sid, blurry)["hints"]}
+
+
+def test_unknown_check_group_is_rejected():
+    from kyc.core.errors import InvalidInput
+
+    p = build()
+    p.settings.debug = True
+    with pytest.raises(InvalidInput):
+        p.start(["no_such_check"])
+
+
+def test_no_face_cannot_be_switched_off():
+    from kyc.modules.face_capture.quality import CHECK_GROUPS
+
+    switchable = {code for codes in CHECK_GROUPS.values() for code in codes}
+    assert "no_face" not in switchable and "still_face_mismatch" not in switchable
+
+
+def test_api_session_options_are_refused_outside_debug(client):
+    r = client.post("/v1/face-capture/sessions", json={"disabled_checks": ["gaze"]})
+    assert r.status_code == 403 and r.json()["error"] == "checks_locked"
+    assert client.post("/v1/face-capture/sessions").status_code == 201

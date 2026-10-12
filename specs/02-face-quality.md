@@ -369,3 +369,19 @@ webcam yet. Assumed to work for now (team decision); verify before relying
 on `background_check=error` in production, and raise
 `max_background_luma_std` if plain walls are refused.
 
+### 2026-10-12 — switching checks on and off
+
+Every check group (`CHECK_GROUPS` in `quality.py`: distance, lighting,
+sharpness, no_cover, eyes_open, mouth_closed, gaze, head_pose, background,
+single_person, even_lighting) can be switched off:
+
+- **per deployment** — `KYC_FACE_QUALITY_DISABLED_CHECKS=["background"]`,
+  set by the server operator (e.g. a client that does not need a plain wall);
+- **per session from the dev page** — only with `KYC_DEBUG=true`. In
+  production a session request that disables checks is refused with 403
+  `checks_locked`: if a client could switch checks off, they would protect
+  nothing. The prototype had the same toggles but as a *global* setting any
+  client could change for everyone.
+
+Not switchable: `no_face`, and the still's same-person check — without them
+there is no capture. Metrics of disabled checks are still reported.

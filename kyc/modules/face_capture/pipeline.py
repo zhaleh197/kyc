@@ -23,7 +23,7 @@ import cv2
 import numpy as np
 
 from kyc.core.config import Settings, get_settings
-from kyc.core.errors import ImageQualityError, InvalidInput
+from kyc.core.errors import ImageQualityError, InvalidInput, KycError
 from kyc.core.face.detector import Face, FaceDetector
 from kyc.core.face.embedder import FaceEmbedder, cosine
 from kyc.core.face.landmarks import Landmarker
@@ -41,6 +41,13 @@ MODULE_VERSION = "0.2.0"
 class SessionNotFound(InvalidInput):
     code = "session_not_found"
     http_status = 404
+
+
+class ChecksLocked(KycError):
+    """Switching checks off per session is a debug-only feature."""
+
+    code = "checks_locked"
+    http_status = 403
 
 
 class SessionClosed(InvalidInput):
@@ -81,7 +88,16 @@ class FaceCapturePipeline:
 
     # ---------------------------------------------------------------- analysis
 
-    def assess(self, image: np.ndarray) -> quality.FrameAssessment:
+    def _disabled(self, extra: frozenset[str] = frozenset()) -> frozenset[str]:
+        groups = frozenset(self.settings.face_quality.disabled_checks) | extra
+        unknown = groups - quality.CHECK_GROUPS.keys()
+        if unknown:
+            raise InvalidInput(
+                f"Unknown check group(s): {sorted(unknown)}", details={"known": sorted(quality.CHECK_GROUPS)}
+            )
+        return groups
+
+    def assess(self, image: np.ndarray, disabled: frozenset[str] = frozenset()) -> quality.FrameAssessment:
         cfg = self.settings.face_quality
         h, w = image.shape[:2]
         if min(h, w) < cfg.min_image_side:
@@ -94,7 +110,8 @@ class FaceCapturePipeline:
         if faces:
             landmarks = self._model("landmarker").landmarks(image, faces[0])
             clear_logit = self._model("occlusion").clear_logit(image, faces[0])
-        return quality.assess(image, faces, landmarks, cfg, clear_logit)
+        assessment = quality.assess(image, faces, landmarks, cfg, clear_logit)
+        return quality.drop_disabled(assessment, self._disabled(disabled))
 
     def check(self, image: np.ndarray) -> ModuleResult:
         """Stateless single-image check (back-office use). Never yields a capture_id."""
@@ -106,8 +123,14 @@ class FaceCapturePipeline:
 
     # ---------------------------------------------------------------- sessions
 
-    def start(self) -> CaptureSession:
-        return self.store.create()
+    def start(self, disabled_checks: list[str] | None = None) -> CaptureSession:
+        """`disabled_checks` (dev page) is honoured only with KYC_DEBUG=true:
+        letting any client switch checks off would make them meaningless."""
+        requested = frozenset(disabled_checks or ())
+        if requested and not self.settings.debug:
+            raise ChecksLocked("Checks can only be switched off per session in debug mode")
+        self._disabled(requested)  # validate names up front
+        return self.store.create(requested)
 
     def submit_frame(self, session_id: str, image: np.ndarray) -> dict:
         """One video frame. Gives hints; qualifies the stream for the still."""
@@ -115,7 +138,7 @@ class FaceCapturePipeline:
         session = self._session(session_id)
         with session.lock:
             self._accept_input(session, (CaptureState.SEARCHING, CaptureState.READY_FOR_STILL))
-            a = self.assess(image)
+            a = self.assess(image, session.disabled_checks)
             session.last_hints = a.reasons
             if session.state is CaptureState.READY_FOR_STILL:
                 # Keep guiding while the client takes the still; qualification stands.
@@ -146,7 +169,7 @@ class FaceCapturePipeline:
         with session.lock:
             self._accept_input(session, (CaptureState.READY_FOR_STILL,))
             image = limit_size(image, cfg.max_still_side)
-            a = self.assess(image)
+            a = self.assess(image, session.disabled_checks)
             if a.face is not None and a.ok:
                 similarity = cosine(session.stream_embedding, self._model("embedder").embed(image, a.face))
                 a.metrics["still_similarity"] = round(similarity, 4)

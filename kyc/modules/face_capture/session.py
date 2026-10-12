@@ -60,6 +60,8 @@ class CaptureSession:
     recent_codes: list = field(default_factory=list)
     shown_hint: str | None = None
     last_reasons_by_code: list = field(default_factory=list)
+    # Check groups switched off for this session (dev page, debug mode only).
+    disabled_checks: frozenset = frozenset()
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def expired(self, now: float | None = None) -> bool:
@@ -73,8 +75,10 @@ class CaptureStore:
         self._captures: dict[str, Capture] = {}
         self._lock = threading.Lock()
 
-    def create(self) -> CaptureSession:
-        session = CaptureSession(session_id=secrets.token_urlsafe(16), expires_at=time.time() + self.ttl_s)
+    def create(self, disabled_checks: frozenset = frozenset()) -> CaptureSession:
+        session = CaptureSession(
+            session_id=secrets.token_urlsafe(16), expires_at=time.time() + self.ttl_s, disabled_checks=disabled_checks
+        )
         with self._lock:
             self._reap()
             self._sessions[session.session_id] = session

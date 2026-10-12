@@ -31,6 +31,8 @@
   pre { direction:ltr; text-align:left; font-size:11px; background:#f3f4f7; padding:8px; border-radius:8px; max-height:220px; overflow:auto; white-space:pre-wrap; }
   .muted { color:var(--muted); font-size:12px; }
   label { font-size:13px; }
+  .checks { display:grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap:4px 12px; margin-top:6px; }
+  .checks label { display:flex; gap:6px; align-items:center; }
   .pair { display:flex; gap:10px; margin-top:10px; align-items:flex-start; }
   .pair figure { margin:0; flex:1; text-align:center; font-size:12px; color:var(--muted); }
   .pair img { width:100%; max-height:220px; object-fit:contain; background:#111; border-radius:8px; }
@@ -51,6 +53,14 @@
     </div>
     <div class="hint-main" id="hint">برای شروع، «شروع» را بزنید.</div>
     <ul class="hints" id="hints"></ul>
+    <details id="checksBox" open style="margin-top:12px">
+      <summary><b>بررسی‌های فعال</b> <span class="muted">(قبل از «شروع» انتخاب کنید؛ فقط در حالت توسعه)</span></summary>
+      <div class="checks" id="checks"></div>
+      <div class="row" style="margin-top:6px">
+        <button id="allOn" type="button">همه</button>
+        <button id="allOff" type="button">هیچ‌کدام</button>
+      </div>
+    </details>
     <div class="row">
       <button class="primary" id="start">شروع</button>
       <button id="stop" disabled>توقف</button>
@@ -121,6 +131,24 @@
     hint.className = cls; hint.textContent = text;
   }
   let captureId = null, selfieB64 = null;
+  // Check groups (server: CHECK_GROUPS in kyc/modules/face_capture/quality.py).
+  const CHECKS = [
+    ["distance", "فاصله و قرارگیری صورت"],
+    ["lighting", "نور کافی (نه تاریک، نه خیلی روشن)"],
+    ["sharpness", "وضوح (تار نبودن)"],
+    ["no_cover", "پوشش صورت (ماسک، دست، عینک آفتابی)"],
+    ["eyes_open", "چشم باز"],
+    ["mouth_closed", "دهان بسته"],
+    ["gaze", "نگاه مستقیم به دوربین"],
+    ["head_pose", "زاویهٔ سر (صاف و رو به جلو)"],
+    ["background", "پس‌زمینهٔ یکدست"],
+    ["single_person", "فقط یک نفر در کادر"],
+    ["even_lighting", "نور یکنواخت روی صورت (فقط پیام)"],
+  ];
+  $("checks").innerHTML = CHECKS.map(([k, fa]) => `<label><input type="checkbox" data-check="${k}" checked> ${fa}</label>`).join("");
+  const checkBoxes = () => [...document.querySelectorAll("[data-check]")];
+  $("allOn").onclick = () => checkBoxes().forEach((c) => (c.checked = true));
+  $("allOff").onclick = () => checkBoxes().forEach((c) => (c.checked = false));
   let stream = null, sessionId = null, running = false, lastJpeg = null, savedCount = 0, sent = 0, t0 = 0;
 
   async function api(path, opts = {}) {
@@ -211,7 +239,16 @@
       $("hint").className = "hint-main err"; $("hint").textContent = "دسترسی به دوربین ممکن نشد: " + e.message; return;
     }
     video.srcObject = stream; await video.play();
-    sessionId = (await api("/v1/face-capture/sessions", { method: "POST" })).session_id;
+    const disabled = checkBoxes().filter((c) => !c.checked).map((c) => c.dataset.check);
+    try {
+      sessionId = (await api("/v1/face-capture/sessions", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ disabled_checks: disabled }),
+      })).session_id;
+    } catch (e) {
+      setHint("hint-main err", "شروع نشد: " + e.message); stopCamera(false); return;
+    }
+    checkBoxes().forEach((c) => (c.disabled = true));
     running = true; sent = 0; t0 = performance.now();
     $("start").disabled = true; $("stop").disabled = false; $("save").disabled = false;
     loop();
@@ -222,6 +259,7 @@
     if (stream) stream.getTracks().forEach((t) => t.stop());
     stream = null;
     $("start").disabled = false; $("stop").disabled = true; $("save").disabled = true;
+    checkBoxes().forEach((c) => (c.disabled = false));
     if (resetHint) { $("hint").className = "hint-main"; $("hint").textContent = "متوقف شد."; }
   }
 

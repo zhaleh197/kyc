@@ -224,3 +224,22 @@ measurement: tens of pairs, labels assumed, one webcam.
 
 Also found: the dataset holds many exact copies of the same card
 (`-Copy`, similarity 1.0) — any future eval must group by identity first.
+
+### 2026-10-12 — labelled measurement
+
+The team confirmed the tester's cards: `10`, `1000`, `2000`, `mzh` (train),
+`700` (val), `500` (test). With the tester's 4 selfies (2 webcam frames,
+`3+.jpg`, `5778283163217413809.jpg`):
+
+| Pairs | n | Similarity |
+|---|---|---|
+| Same person, real cards (val/test) | 8 | 0.257–0.521, median 0.40 |
+| Same person, augmented train copies | 20 | 0.202–…, median 0.354 |
+| Same person, hand over the mouth | 2 | 0.257–0.302 |
+| **Different people** (tester's selfies × 409 other cards) | 1636 | **max 0.235**, p99 0.218 |
+
+At the earlier 0.40, half the genuine real-card pairs went to review while no
+different-person pair came near. **Set: `accept_above` 0.30, `reject_below`
+0.25.** At 0.30: 0/1636 impostors above, 1/8 genuine below (the covered-mouth
+frame, which capture now rejects). Still one identity — re-measure with more
+people before production (M1).

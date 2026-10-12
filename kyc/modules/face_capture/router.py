@@ -35,14 +35,21 @@ class FrameBase64(BaseModel):
     image_base64: str
 
 
+class SessionOptions(BaseModel):
+    # Dev page only: honoured with KYC_DEBUG=true, refused (403) otherwise.
+    disabled_checks: list[str] = []
+
+
 class SessionCreated(BaseModel):
     session_id: str
     expires_in_s: int
 
 
 @router.post("/v1/face-capture/sessions", response_model=SessionCreated, status_code=201)
-def create_session(pipeline: FaceCapturePipeline = Depends(get_pipeline)) -> SessionCreated:
-    session = pipeline.start()
+def create_session(
+    options: SessionOptions | None = None, pipeline: FaceCapturePipeline = Depends(get_pipeline)
+) -> SessionCreated:
+    session = pipeline.start(options.disabled_checks if options else None)
     return SessionCreated(session_id=session.session_id, expires_in_s=pipeline.settings.face_quality.session_ttl_s)
 
 
