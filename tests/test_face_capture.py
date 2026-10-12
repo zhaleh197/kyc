@@ -252,7 +252,7 @@ def test_uneven_lighting_is_informational_only():
     frame[:, :320] //= 4
     # The darkened half covers one eye; gaze is not what this test is about.
     a = check(
-        [make_face()], frame=frame, min_brightness=10, min_gaze_vertical=-9, max_gaze_vertical=9, background_check="off"
+        [make_face()], frame=frame, min_brightness=10, min_gaze_vertical=-9, max_gaze_vertical=9, check_modes={"background": "off"}
     )
     assert "uneven_lighting" in codes(a.reasons)
     assert a.ok
@@ -315,9 +315,9 @@ def test_background_check_blocks_by_default_and_is_configurable():
     density, spread, _ = background_stats(plain, face)
     assert density < 0.03 and spread < 30
     assert not check([face], frame=busy).ok  # default: error (team requirement)
-    info = check([face], frame=busy, background_check="info")
+    info = check([face], frame=busy, check_modes={"background": "info"})
     assert "background_not_uniform" in codes(info.reasons) and info.ok
-    assert "background_not_uniform" not in codes(check([face], frame=busy, background_check="off").reasons)
+    assert "background_not_uniform" not in codes(check([face], frame=busy, check_modes={"background": "off"}).reasons)
 
 
 # ------------------------------------------------------------------ sessions
@@ -615,16 +615,16 @@ def test_switching_checks_off_per_session_is_debug_only():
     from kyc.modules.face_capture.pipeline import ChecksLocked
 
     with pytest.raises(ChecksLocked):
-        build().start(["background"])  # production: refused
+        build().start({"background": "off"})  # production: refused
     p = build()
     p.settings.debug = True
-    sid = p.start(["background"]).session_id
+    sid = p.start({"background": "off"}).session_id
     fb = p.submit_frame(sid, busy_background_frame())
     assert "background_not_uniform" not in {h["code"] for h in fb["hints"]}
 
 
 def test_a_disabled_check_does_not_block_but_others_still_do():
-    p = build(disabled_checks=["background"])  # deployment-level, set by the server operator
+    p = build(check_modes={"background": "off"})  # deployment-level, set by the server operator
     sid = p.start().session_id
     p.submit_frame(sid, busy_background_frame())
     assert p.submit_frame(sid, busy_background_frame())["state"] == "READY_FOR_STILL"
@@ -638,7 +638,7 @@ def test_unknown_check_group_is_rejected():
     p = build()
     p.settings.debug = True
     with pytest.raises(InvalidInput):
-        p.start(["no_such_check"])
+        p.start({"no_such_check": "off"})
 
 
 def test_no_face_cannot_be_switched_off():
@@ -649,6 +649,31 @@ def test_no_face_cannot_be_switched_off():
 
 
 def test_api_session_options_are_refused_outside_debug(client):
-    r = client.post("/v1/face-capture/sessions", json={"disabled_checks": ["gaze"]})
+    r = client.post("/v1/face-capture/sessions", json={"check_modes": {"gaze": "off"}})
     assert r.status_code == 403 and r.json()["error"] == "checks_locked"
     assert client.post("/v1/face-capture/sessions").status_code == 201
+
+
+
+def test_uneven_lighting_is_info_by_default_and_can_block():
+    frame = textured_frame()
+    frame[:, :320] //= 4
+    relaxed = {"min_brightness": 10, "min_gaze_vertical": -9, "max_gaze_vertical": 9}
+    default = check([make_face()], frame=frame, check_modes={"background": "off"}, **relaxed)
+    assert "uneven_lighting" in codes(default.reasons) and default.ok
+    strict = check([make_face()], frame=frame, check_modes={"background": "off", "even_lighting": "block"}, **relaxed)
+    assert not strict.ok
+
+
+def test_a_blocking_check_can_be_made_message_only():
+    a = check([make_face()], eye_open=0.05, check_modes={"eyes_open": "info"})
+    assert "eyes_closed" in codes(a.reasons) and a.ok
+
+
+def test_unknown_mode_is_rejected():
+    from kyc.core.errors import InvalidInput
+
+    p = build()
+    p.settings.debug = True
+    with pytest.raises(InvalidInput):
+        p.start({"gaze": "maybe"})

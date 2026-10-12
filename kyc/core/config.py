@@ -158,18 +158,17 @@ class FaceQualitySettings(BaseSettings):
     # 0-0.017, a marble-veined wall from a real webcam frame 0.055, ordinary
     # rooms 0.043-0.20. Blocking by default (team requirement, 2026-10-11):
     # most selfies taken at home will be asked to move to a plain wall.
-    # off | info | warn | error.
-    background_check: Literal["off", "info", "warn", "error"] = "error"
     max_background_edge_density: float = 0.03
     # Luma std of the background. Plain walls 3.5-20.4; a blurred office
     # 44.7, real webcam frames in a room 42-50. The prototype used 25-30.
     max_background_luma_std: float = 30.0
     min_background_fraction: float = Field(0.05, description="Below this much visible background, skip the check")
 
-    # Check groups switched off for this deployment, e.g. ["background"]
-    # where a plain wall is not required. Names: see CHECK_GROUPS in
-    # kyc/modules/face_capture/quality.py. Only the server sets this.
-    disabled_checks: list[str] = Field(default_factory=list)
+    # Per check group: "off" (not checked), "info" (hint shown, capture goes
+    # on) or "block" (no capture until fixed). Overrides DEFAULT_CHECK_MODES
+    # in kyc/modules/face_capture/quality.py, e.g. {"background": "off"}
+    # where a plain wall is not required. Only the server operator sets this.
+    check_modes: dict[str, Literal["off", "info", "block"]] = Field(default_factory=dict)
 
     # --- hints ---------------------------------------------------------
     # The hint shown to the user changes only when a problem appears in at

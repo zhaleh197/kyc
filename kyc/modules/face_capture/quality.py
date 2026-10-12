@@ -20,10 +20,11 @@ from kyc.core.schemas import Reason, Severity
 
 CROP_SIZE = 256
 
-# Checks that can be switched off, by the reason codes they produce. A group
-# is disabled per deployment (KYC_FACE_QUALITY_DISABLED_CHECKS) or, only with
-# KYC_DEBUG=true, per session from the dev page. "no_face" and the still's
-# same-person check are not here on purpose: without them there is no capture.
+# Check groups, by the reason codes they produce. Each runs in a mode:
+# "off", "info" (hint only) or "block". Modes come from DEFAULT_CHECK_MODES,
+# then the deployment's KYC_FACE_QUALITY_CHECK_MODES, then - only with
+# KYC_DEBUG=true - the dev page's per-session choice. "no_face" and the
+# still's same-person check are not here on purpose: they always block.
 CHECK_GROUPS: dict[str, tuple[str, ...]] = {
     "single_person": ("multiple_faces",),
     "distance": ("face_too_small", "face_too_large", "face_off_center", "face_cut_off", "face_too_close_for_context"),
@@ -39,11 +40,45 @@ CHECK_GROUPS: dict[str, tuple[str, ...]] = {
 }
 
 
-def drop_disabled(a: FrameAssessment, disabled: frozenset[str]) -> FrameAssessment:
-    """Remove the reasons of disabled check groups (metrics stay reported)."""
-    if disabled:
-        codes = {c for group in disabled for c in CHECK_GROUPS[group]}
-        a.reasons = [r for r in a.reasons if r.code not in codes]
+CheckMode = str  # "off" | "info" | "block"
+CHECK_MODES = ("off", "info", "block")
+
+# Uneven light is "info" by default: 6 of 15 ordinary indoor test photos had
+# strong one-sided light, so blocking on it would refuse many genuine users.
+DEFAULT_CHECK_MODES: dict[str, CheckMode] = dict.fromkeys(CHECK_GROUPS, "block") | {"even_lighting": "info"}
+
+_GROUP_OF = {code: group for group, codes in CHECK_GROUPS.items() for code in codes}
+
+
+def resolve_modes(*overrides: dict[str, CheckMode] | None) -> dict[str, CheckMode]:
+    """Defaults, then each override in order. Raises ValueError on unknown
+    group names or modes."""
+    modes = dict(DEFAULT_CHECK_MODES)
+    for override in overrides:
+        for group, mode in (override or {}).items():
+            if group not in CHECK_GROUPS:
+                raise ValueError(f"unknown check group {group!r}; known: {sorted(CHECK_GROUPS)}")
+            if mode not in CHECK_MODES:
+                raise ValueError(f"unknown mode {mode!r} for {group!r}; use one of {CHECK_MODES}")
+            modes[group] = mode
+    return modes
+
+
+def apply_modes(a: FrameAssessment, modes: dict[str, CheckMode]) -> FrameAssessment:
+    """Drop "off" findings, make "info" ones non-blocking and "block" ones
+    blocking. Codes outside CHECK_GROUPS (no_face) are left as they are.
+    Metrics stay reported whatever the mode."""
+    kept = []
+    for r in a.reasons:
+        group = _GROUP_OF.get(r.code)
+        if group is None:
+            kept.append(r)
+            continue
+        mode = modes[group]
+        if mode == "off":
+            continue
+        kept.append(r.model_copy(update={"severity": Severity.ERROR if mode == "block" else Severity.INFO}))
+    a.reasons = kept
     return a
 
 # Order in which blocking hints are shown: the client displays the first one,
@@ -127,6 +162,7 @@ def assess(
     landmarks: np.ndarray | None,
     cfg: FaceQualitySettings,
     clear_logit: float | None = None,
+    session_modes: dict[str, CheckMode] | None = None,
 ) -> FrameAssessment:
     """`faces` largest first; `landmarks` are the 106 points of faces[0];
     `clear_logit` is the occlusion classifier's output for faces[0], if run."""
@@ -190,11 +226,9 @@ def assess(
         # then told "blurry" when the fix was more light.
         out.reasons.append(_err("face_blurry", "Face is blurry", "تصویر تار است؛ دوربین را ثابت نگه دارید"))
     if m["illumination_asymmetry"] > cfg.max_illumination_asymmetry:
-        # Info, not warn: 6 of 15 ordinary indoor test photos measured above
-        # 0.5 on both the whole face box and its inner region - one-sided
-        # room light is normal. Promote only if it is shown to hurt matching.
+        # Blocking or not is the check mode's decision (default: info).
         out.reasons.append(
-            Reason.info("uneven_lighting", "One side of the face is much darker", "نور یکنواخت نیست؛ رو به نور بایستید")
+            _err("uneven_lighting", "One side of the face is much darker", "نور یکنواخت نیست؛ رو به نور بایستید")
         )
 
     # --- pose
@@ -216,7 +250,10 @@ def assess(
         if m["mouth_openness"] > cfg.max_mouth_openness:
             out.reasons.append(_err("mouth_open", "Mouth is open", "دهانتان را ببندید"))
 
-        offsets = iris_offsets(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), landmarks)
+        # With the eyes (nearly) closed the iris is hidden and its "position"
+        # is noise - that is the eyes_closed check's job, not a gaze finding.
+        eyes_open = min(left_eye, right_eye) >= cfg.min_eye_openness
+        offsets = iris_offsets(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), landmarks) if eyes_open else []
         if offsets:
             horizontal, vertical = np.mean(offsets, axis=0)
             m["gaze_offset"] = round(float(horizontal), 4)
@@ -243,7 +280,8 @@ def assess(
             )
 
     # --- background
-    if cfg.background_check != "off":
+    # Always measured; a check mode of "off" drops the finding, not the metric.
+    if True:
         density, spread, fraction = background_stats(img, face)
         m["background_fraction"] = round(fraction, 3)
         if fraction >= cfg.min_background_fraction:
@@ -251,14 +289,14 @@ def assess(
             m["background_luma_std"] = round(spread, 2)
             if density > cfg.max_background_edge_density or spread > cfg.max_background_luma_std:
                 out.reasons.append(
-                    Reason(
-                        code="background_not_uniform",
-                        severity=Severity(cfg.background_check),
-                        message_en="Background is not plain",
-                        message_fa="پس‌زمینه یکدست نیست؛ جلوی دیوار ساده بایستید",
+                    _err(
+                        "background_not_uniform",
+                        "Background is not plain",
+                        "پس‌زمینه یکدست نیست؛ جلوی دیوار ساده بایستید",
                     )
                 )
 
+    apply_modes(out, resolve_modes(cfg.check_modes, session_modes))
     rank = {code: i for i, code in enumerate(HINT_PRIORITY)}
     out.reasons.sort(key=lambda r: (r.severity.value != "error", rank.get(r.code, len(rank))))
     return out

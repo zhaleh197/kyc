@@ -37,7 +37,8 @@ class FrameBase64(BaseModel):
 
 class SessionOptions(BaseModel):
     # Dev page only: honoured with KYC_DEBUG=true, refused (403) otherwise.
-    disabled_checks: list[str] = []
+    # {"group": "off" | "info" | "block"}
+    check_modes: dict[str, str] = {}
 
 
 class SessionCreated(BaseModel):
@@ -49,7 +50,7 @@ class SessionCreated(BaseModel):
 def create_session(
     options: SessionOptions | None = None, pipeline: FaceCapturePipeline = Depends(get_pipeline)
 ) -> SessionCreated:
-    session = pipeline.start(options.disabled_checks if options else None)
+    session = pipeline.start(options.check_modes if options else None)
     return SessionCreated(session_id=session.session_id, expires_in_s=pipeline.settings.face_quality.session_ttl_s)
 
 

@@ -369,19 +369,28 @@ webcam yet. Assumed to work for now (team decision); verify before relying
 on `background_check=error` in production, and raise
 `max_background_luma_std` if plain walls are refused.
 
-### 2026-10-12 — switching checks on and off
+### 2026-10-12 — check modes: off / info / block
 
 Every check group (`CHECK_GROUPS` in `quality.py`: distance, lighting,
-sharpness, no_cover, eyes_open, mouth_closed, gaze, head_pose, background,
-single_person, even_lighting) can be switched off:
+even_lighting, sharpness, no_cover, eyes_open, mouth_closed, gaze, head_pose,
+background, single_person) runs in one of three modes:
 
-- **per deployment** — `KYC_FACE_QUALITY_DISABLED_CHECKS=["background"]`,
-  set by the server operator (e.g. a client that does not need a plain wall);
-- **per session from the dev page** — only with `KYC_DEBUG=true`. In
-  production a session request that disables checks is refused with 403
-  `checks_locked`: if a client could switch checks off, they would protect
-  nothing. The prototype had the same toggles but as a *global* setting any
-  client could change for everyone.
+| Mode | Effect |
+|---|---|
+| `block` | no capture until fixed (default for every group except even_lighting) |
+| `info` | the hint is shown, capture goes on (default for even_lighting) |
+| `off` | not reported (metrics still are) |
 
-Not switchable: `no_face`, and the still's same-person check — without them
-there is no capture. Metrics of disabled checks are still reported.
+Set **per deployment** with `KYC_FACE_QUALITY_CHECK_MODES` (server operator
+only), or **per session from the dev page**, which is honoured only with
+`KYC_DEBUG=true` — in production such a request gets 403 `checks_locked`:
+checks a client can relax protect nothing. `no_face` and the still's
+same-person check always block.
+
+Why the change: on a real test, a selfie was captured while the page showed
+"uneven lighting". That was by design (even_lighting was hard-wired to info,
+because 6 of 15 normal indoor photos had one-sided light), but the team needs
+to choose per check — so blocking is now a setting, not a code decision.
+
+Also fixed: gaze is no longer judged with the eyes closed (the hidden iris
+gave a false "look at the camera"); that is eyes_closed's job.
