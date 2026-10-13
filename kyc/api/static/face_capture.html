@@ -75,6 +75,7 @@
     <div class="row" id="spoofSave" style="display:none">
       <span class="muted">ذخیرهٔ همین سلفی برای کالیبراسیون anti-spoof:</span>
       <select id="spoofLabel">
+        <option value="" selected disabled>— برچسب را انتخاب کنید —</option>
         <option value="real">واقعی (خودم، زنده)</option>
         <option value="phone_screen">عکس/ویدیو روی صفحهٔ گوشی</option>
         <option value="monitor">روی مانیتور/لپ‌تاپ</option>
@@ -388,10 +389,13 @@
   $("spoofSaveBtn").onclick = () => {
     if (!selfieB64) return;
     const label = $("spoofLabel").value;
+    // No default label: a default of "real" mislabelled two monitor shots.
+    if (!label) { $("spoofSaved").textContent = "اول برچسب را انتخاب کنید"; return; }
     const a = document.createElement("a");
     a.href = "data:image/jpeg;base64," + selfieB64;
     a.download = `${label}__${new Date().toISOString().replace(/[:.]/g, "-")}.jpg`;
     a.click(); spoofSavedCount++;
+    $("spoofLabel").value = "";  // choose again for the next selfie
     $("spoofSaved").textContent = `${spoofSavedCount} ذخیره شد (آخری: ${label})`;
   };
 
