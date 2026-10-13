@@ -71,6 +71,23 @@ class AntiSpoofPipeline:
         if self._models is None:
             self._models = self._models_factory()
 
+        sharpness = capture.metrics.get("sharpness")
+        if sharpness is not None and sharpness < cfg.min_sharpness:
+            # No verdict on an image the models cannot judge: a blurred live
+            # face looks like a recapture to them. Retake, not "spoof".
+            with Timer() as timer:
+                reasons = [
+                    Reason.error(
+                        "retake_low_quality",
+                        f"The selfie is too blurry to check for spoofing (sharpness {sharpness:.1f}); retake it",
+                        "عکس تار یا کم‌کیفیت است؛ لطفاً دوباره عکس بگیرید",
+                    )
+                ]
+                data = {"capture_id": capture_id, "retake": True, "live_score": None, "sharpness": sharpness,
+                        "min_sharpness": cfg.min_sharpness}
+            return ModuleResult(module=MODULE_NAME, version=MODULE_VERSION, decision=Decision.FAIL, score=0.0,
+                                reasons=reasons, data=data, elapsed_ms=round(timer.ms, 2))
+
         with Timer() as timer:
             image = decode_image(capture.jpeg)
             boxes = jitter_boxes(tuple(capture.face_box), cfg.box_jitter)
@@ -130,7 +147,7 @@ class AntiSpoofPipeline:
                         "فضای کافی دور صورت برای بررسی کامل نیست",
                     )
                 )
-            data = {"capture_id": capture_id, "live_score": round(live, 4), "models": per_model,
+            data = {"capture_id": capture_id, "retake": False, "live_score": round(live, 4), "models": per_model,
                     "thresholds": {"accept_above": cfg.accept_above, "reject_below": cfg.reject_below},
                     "jitter_boxes": len(boxes)}
 

@@ -17,11 +17,11 @@ from kyc.modules.antispoof.router import get_pipeline
 from kyc.modules.face_capture.session import Capture
 
 
-def capture(box=(270.0, 190.0, 370.0, 290.0)) -> Capture:
+def capture(box=(270.0, 190.0, 370.0, 290.0), sharpness=50.0) -> Capture:
     img = np.random.default_rng(3).integers(0, 255, (480, 640, 3)).astype(np.uint8)
     return Capture(
         capture_id="cap-1", session_id="s", jpeg=cv2.imencode(".jpg", img)[1].tobytes(),
-        face_box=box, kps=np.zeros((5, 2), np.float32), metrics={}, score=0.9,
+        face_box=box, kps=np.zeros((5, 2), np.float32), metrics={"sharpness": sharpness}, score=0.9,
     )
 
 
@@ -123,3 +123,14 @@ def test_api_takes_only_a_capture_id():
         assert set(schema) == {"capture_id"}
     finally:
         app.dependency_overrides.clear()
+
+
+@pytest.mark.parametrize("live", [(0.2, 0.1), (0.99, 0.99)])
+def test_a_blurry_selfie_gets_retake_never_a_spoof_verdict(live):
+    """Team decision: low quality -> "retake", whatever the models say."""
+    p, models = build(live, captures={"cap-1": capture(sharpness=1.0)})
+    result = p.verify("cap-1")
+    assert result.decision is Decision.FAIL
+    assert [r.code for r in result.reasons] == ["retake_low_quality"]
+    assert result.data["retake"] is True and result.data["live_score"] is None
+    assert all(m.batch_sizes == [] for m in models)  # the models were not consulted

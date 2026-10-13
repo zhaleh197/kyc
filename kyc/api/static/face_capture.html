@@ -326,6 +326,12 @@
       const r = await api("/v1/antispoof/verify", {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ capture_id: captureId }),
       });
+      if (r.data.retake) {
+        v.className = "verdict review";
+        v.innerHTML = `تشخیص جعل: 🔁 ${r.reasons[0].message_fa}
+          <div class="muted">وضوح ${r.data.sharpness.toFixed(2)} &lt; ${r.data.min_sharpness} — حکم جعل/زنده داده نشد</div>`;
+        return;
+      }
       const t = r.data.thresholds;
       v.className = "verdict " + r.decision;
       v.innerHTML = `تشخیص جعل: ${SPOOF_FA[r.decision]} — امتیاز زنده بودن <b>${r.data.live_score.toFixed(3)}</b>

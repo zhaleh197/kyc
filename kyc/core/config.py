@@ -280,6 +280,13 @@ class AntiSpoofSettings(BaseSettings):
     # grid makes the score depend less on which detector drew the box.
     box_jitter: float = Field(0.10, description="Relative size/shift of the box-jitter grid; 0 disables")
     max_model_disagreement: float = Field(0.6, description="Reported when the two models differ by more")
+    # Below this sharpness (face capture's denoised scale) the anti-spoof
+    # models cannot judge: blur erases the texture they read, and a real
+    # phone test called a blurred LIVE selfie a spoof (0.465). Such a selfie
+    # gets "retake the photo", never a spoof verdict (team decision,
+    # 2026-10-13). Provisional - set above the capture floor (3.0) until
+    # phone frames give a measured value.
+    min_sharpness: float = Field(5.0, description="Below this the selfie must be retaken; no spoof verdict")
 
 
 class Settings(BaseSettings):

@@ -212,3 +212,15 @@ unlabelled.
 **Status: first version done** — screen replay caught on a real test.
 Before production: a printed-photo test, more devices/screens, and a
 labelled attack set for APCER/BPCER (S1–S3).
+
+### 2026-10-13 — a blurred live selfie must get "retake", not "spoof"
+
+A phone test produced a blurred **live** selfie that anti-spoof scored 0.465
+→ "spoof". Blur erases the texture the models read, so on such an image
+their verdict is unreliable in both directions. **Team decision:** below
+`min_sharpness` (face capture's denoised scale, provisional 5.0) the module
+returns `retake_low_quality` — «عکس تار یا کم‌کیفیت است؛ لطفاً دوباره عکس
+بگیرید» — with `data.retake = true` and no live score; the models are not
+consulted. Still safe: a deliberately blurred spoof cannot pass, it is only
+asked to retake. Face capture tries first to never capture such a photo
+(02 §12, relative + denoised blur checks).
