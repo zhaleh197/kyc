@@ -72,6 +72,17 @@
     <div class="hint-main" id="hint">برای شروع، «شروع» را بزنید.</div>
     <ul class="hints" id="hints"></ul>
     <div class="verdict" id="spoofVerdict" style="display:none"></div>
+    <div class="row" id="spoofSave" style="display:none">
+      <span class="muted">ذخیرهٔ همین سلفی برای کالیبراسیون anti-spoof:</span>
+      <select id="spoofLabel">
+        <option value="real">واقعی (خودم، زنده)</option>
+        <option value="phone_screen">عکس/ویدیو روی صفحهٔ گوشی</option>
+        <option value="monitor">روی مانیتور/لپ‌تاپ</option>
+        <option value="print">عکس چاپی</option>
+      </select>
+      <button id="spoofSaveBtn" type="button">ذخیره</button>
+      <span class="muted" id="spoofSaved"></span>
+    </div>
     <details id="checksBox" open style="margin-top:12px">
       <summary><b>بررسی‌ها</b> <span class="muted">(قبل از «شروع» انتخاب کنید؛ فقط در حالت توسعه)</span></summary>
       <p class="muted" style="margin:6px 0 0">«جلوگیری»: تا درست نشود سلفی گرفته نمی‌شود · «فقط پیام»: پیام نشان داده می‌شود ولی سلفی گرفته می‌شود · «خاموش»: بررسی نمی‌شود</p>
@@ -255,7 +266,7 @@
     $("result").textContent = JSON.stringify(shown, null, 2);
     captureId = result.data.capture_id; selfieB64 = result.data.selfie_base64;
     $("card").disabled = !captureId;
-    if (captureId) checkSpoof();
+    if (captureId) { checkSpoof(); $("spoofSave").style.display = "flex"; }
     if (result.data.selfie_base64) {
       selfieImg.src = "data:image/jpeg;base64," + result.data.selfie_base64;
       selfieImg.style.display = "block"; video.style.display = "none";
@@ -266,7 +277,7 @@
   async function start() {
     $("result").textContent = "—"; selfieImg.style.display = "none"; video.style.display = "block";
     captureId = null; selfieB64 = null; $("card").disabled = true; $("card").value = "";
-    $("pair").style.display = "none"; $("verdict").style.display = "none"; $("spoofVerdict").style.display = "none";
+    $("pair").style.display = "none"; $("verdict").style.display = "none"; $("spoofVerdict").style.display = "none"; $("spoofSave").style.display = "none";
     try {
       stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
     } catch (e) {
@@ -370,6 +381,19 @@
       v.textContent = e.status === 404 ? "سلفی منقضی شده؛ دوباره سلفی بگیرید." : "خطا: " + e.message;
     }
   }
+
+  // Saves exactly the image anti-spoof judged (the server-held selfie) to
+  // this device, named "<label>__<time>.jpg" for scripts/calibrate_antispoof.py.
+  let spoofSavedCount = 0;
+  $("spoofSaveBtn").onclick = () => {
+    if (!selfieB64) return;
+    const label = $("spoofLabel").value;
+    const a = document.createElement("a");
+    a.href = "data:image/jpeg;base64," + selfieB64;
+    a.download = `${label}__${new Date().toISOString().replace(/[:.]/g, "-")}.jpg`;
+    a.click(); spoofSavedCount++;
+    $("spoofSaved").textContent = `${spoofSavedCount} ذخیره شد (آخری: ${label})`;
+  };
 
   $("card").onchange = (e) => { if (e.target.files[0]) matchCard(e.target.files[0]); };
   $("start").onclick = start;

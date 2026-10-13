@@ -132,6 +132,13 @@ def face_crop_gray(img: np.ndarray, face: Face) -> np.ndarray:
     return cv2.resize(gray, (CROP_SIZE, CROP_SIZE), interpolation=cv2.INTER_AREA)
 
 
+def face_sharpness(gray_crop: np.ndarray) -> float:
+    """Laplacian variance of a face crop after denoising (see
+    SHARPNESS_DENOISE_SIGMA). `gray_crop` is face_crop_gray()'s output."""
+    denoised = cv2.GaussianBlur(gray_crop, (0, 0), SHARPNESS_DENOISE_SIGMA)
+    return float(cv2.Laplacian(denoised, cv2.CV_64F).var())
+
+
 def background_stats(img: np.ndarray, face: Face) -> tuple[float, float, float]:
     """(edge density, luma std, fraction of frame used) on the background
     beside and above the head, at most down to chin level so the torso is
@@ -217,8 +224,7 @@ def assess(
 
     # --- image quality, on the face only
     gray = face_crop_gray(img, face)
-    denoised = cv2.GaussianBlur(gray, (0, 0), SHARPNESS_DENOISE_SIGMA)
-    m["sharpness"] = round(float(cv2.Laplacian(denoised, cv2.CV_64F).var()), 3)
+    m["sharpness"] = round(face_sharpness(gray), 3)
     mean = float(gray.mean())
     m["brightness"] = round(mean, 2)
     left, right = gray[:, : CROP_SIZE // 2].mean(), gray[:, CROP_SIZE // 2 :].mean()
