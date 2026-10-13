@@ -554,6 +554,7 @@ def test_dev_page_exists_only_in_debug(monkeypatch):
     assert len(inputs) == 1 and 'id="card"' in inputs[0]
     assert "/v1/face-match/verify" in page.text
     assert "/v1/antispoof/verify" in page.text
+    assert "/v1/liveness/sessions" in page.text
 
 
 def test_metrics_are_in_feedback_only_in_debug():

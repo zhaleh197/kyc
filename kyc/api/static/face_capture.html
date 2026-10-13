@@ -72,6 +72,11 @@
     <div class="hint-main" id="hint">برای شروع، «شروع» را بزنید.</div>
     <ul class="hints" id="hints"></ul>
     <div class="verdict" id="spoofVerdict" style="display:none"></div>
+    <div id="liveBox" style="display:none; margin-top:12px">
+      <button class="primary" id="liveStart" type="button">شروع بررسی زنده بودن (liveness)</button>
+      <div class="muted" id="liveProgress" style="margin-top:6px"></div>
+      <div class="verdict" id="liveVerdict" style="display:none"></div>
+    </div>
     <div class="row" id="spoofSave" style="display:none">
       <span class="muted">ذخیرهٔ همین سلفی برای کالیبراسیون anti-spoof:</span>
       <select id="spoofLabel">
@@ -267,7 +272,7 @@
     $("result").textContent = JSON.stringify(shown, null, 2);
     captureId = result.data.capture_id; selfieB64 = result.data.selfie_base64;
     $("card").disabled = !captureId;
-    if (captureId) { checkSpoof(); $("spoofSave").style.display = "flex"; }
+    if (captureId) { checkSpoof(); $("spoofSave").style.display = "flex"; $("liveBox").style.display = "block"; }
     if (result.data.selfie_base64) {
       selfieImg.src = "data:image/jpeg;base64," + result.data.selfie_base64;
       selfieImg.style.display = "block"; video.style.display = "none";
@@ -278,7 +283,8 @@
   async function start() {
     $("result").textContent = "—"; selfieImg.style.display = "none"; video.style.display = "block";
     captureId = null; selfieB64 = null; $("card").disabled = true; $("card").value = "";
-    $("pair").style.display = "none"; $("verdict").style.display = "none"; $("spoofVerdict").style.display = "none"; $("spoofSave").style.display = "none";
+    $("pair").style.display = "none"; $("verdict").style.display = "none"; $("spoofVerdict").style.display = "none";
+    $("liveBox").style.display = "none"; $("liveVerdict").style.display = "none"; $("liveProgress").textContent = ""; $("spoofSave").style.display = "none";
     try {
       stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
     } catch (e) {
@@ -400,6 +406,68 @@
   };
 
   $("card").onchange = (e) => { if (e.target.files[0]) matchCard(e.target.files[0]); };
+  // ---------------------------------------------------------------- liveness
+  // Bound to the captured selfie: the server checks every frontal frame is
+  // the same person and runs anti-spoof on the video frames too.
+  const LIVE_FA = { pass: "✅ زنده بودن تأیید شد", review: "⚠️ نیاز به بررسی دستی", fail: "❌ تأیید نشد" };
+  async function startLiveness() {
+    if (!captureId) return;
+    $("liveStart").disabled = true; $("liveVerdict").style.display = "none";
+    let session;
+    try {
+      session = await api("/v1/liveness/sessions", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ capture_id: captureId }),
+      });
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+    } catch (e) {
+      $("liveProgress").textContent = "شروع نشد: " + e.message; $("liveStart").disabled = false; return;
+    }
+    selfieImg.style.display = "none"; video.style.display = "block";
+    video.srcObject = stream; await video.play();
+    $("lookHere").style.display = "block";
+    shownText = ""; shownAt = 0;
+    setHint("hint-main", session.first_instruction_fa);
+    let fb = { state: "BASELINE" };
+    while (fb.state === "BASELINE" || fb.state === "RUNNING") {
+      const started = performance.now();
+      try {
+        const jpeg = await canvasJpeg(video, video.videoWidth, video.videoHeight, FRAME_MAX_W, 0.85);
+        const fd = new FormData(); fd.append("file", jpeg, "frame.jpg");
+        fb = await api(`/v1/liveness/sessions/${session.session_id}/frames`, { method: "POST", body: fd });
+      } catch (e) {
+        if (e.status === 409) break;
+        $("liveProgress").textContent = "خطا: " + e.message; break;
+      }
+      // Task instructions are not debounced like capture hints: each one is
+      // a new command and must show at once.
+      const text = fb.hint ? fb.hint.message_fa : (fb.instruction_fa || "");
+      shownText = text; shownAt = 0;
+      $("hint").className = "hint-main"; $("hint").textContent = text;
+      $("lookHere").className = ""; $("lookMsg").textContent = text;
+      const step = fb.state === "RUNNING" ? `مرحلهٔ ${fb.task_index + 1} از ${fb.total_tasks}` : "آماده‌سازی";
+      const time = fb.time_remaining_s != null ? ` · ${fb.time_remaining_s.toFixed(0)} ثانیه` : "";
+      $("liveProgress").textContent = step + time + (fb.measure ? ` · yaw ${fb.measure.yaw} · eyes ${fb.measure.eyes} · mouth ${fb.measure.mouth}` : "");
+      const wait = 150 - (performance.now() - started);  // as fast as the server allows
+      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    }
+    stream.getTracks().forEach((t) => t.stop()); stream = null;
+    $("lookHere").style.display = "none";
+    try {
+      const r = await api(`/v1/liveness/sessions/${session.session_id}/result`);
+      const v = $("liveVerdict"); v.style.display = "block"; v.className = "verdict " + r.decision;
+      const d = r.data;
+      v.innerHTML = `${LIVE_FA[r.decision]}${r.reasons.length ? " — " + r.reasons.map((x) => x.message_fa).join("، ") : ""}
+        <div class="muted">کارها: ${d.tasks.map((t) => (t.done ? "✓" : "✗") + t.task).join(" ")} · شباهت به سلفی (کمترین): ${d.identity_min_similarity ?? "—"}
+        · زنده بودن (میانه): ${d.live_score_median ?? "—"} · فریم‌ها: ${d.frames_seen}</div>`;
+      $("result").textContent = JSON.stringify(r, null, 2);
+      $("hint").className = "hint-main " + (r.decision === "pass" ? "ok" : "err"); $("hint").textContent = LIVE_FA[r.decision];
+    } catch (e) {
+      $("liveProgress").textContent = "نتیجه دریافت نشد: " + e.message;
+    }
+    $("liveStart").disabled = false;
+  }
+  $("liveStart").onclick = startLiveness;
+
   $("start").onclick = start;
   $("stop").onclick = () => stopCamera();
   $("save").onclick = saveFrames;

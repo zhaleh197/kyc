@@ -1,6 +1,6 @@
 # 05 — Active liveness (challenge–response)
 
-Status: **up-front spec**. Prototype: `phase4-liveness/` — FastAPI + MediaPipe
+Status: **in progress** (branch `liveness`, 2026-10-14): `kyc/modules/liveness/`, see §12. Originally an up-front spec. Prototype: `phase4-liveness/` — FastAPI + MediaPipe
 Face Mesh, session-based; 4 random tasks out of {BLINK, SMILE, LOOK_STRAIGHT,
 TURN_LEFT, TURN_RIGHT, GO_FORWARD, GO_BACK}, 7 s per task, in-memory session
 store with 2-min TTL. This is the most complete prototype; its README already
@@ -145,3 +145,34 @@ phones; replay and photo attacks.
   (Simpler server; loses real-time instructions.)
 - Accessibility: users who cannot smile/blink on cue (facial paralysis) need a
   fallback path — manual review, not a hard fail.
+
+## 12. Build log (2026-10-14)
+
+Built: `POST /v1/liveness/sessions {capture_id}` → random tasks;
+`POST /sessions/{id}/frames`; `GET /sessions/{id}/result` → `ModuleResult`.
+Dev page: "start liveness" after a selfie is captured.
+
+**Changes from the phase4 prototype**
+
+| Prototype | Problem | Now |
+|---|---|---|
+| LOOK_STRAIGHT, CLOSE_EYES tasks | a still photo passes them | removed; pool = BLINK, TURN_LEFT, TURN_RIGHT, SMILE, MOVE_CLOSER — all movements |
+| fixed EAR/yaw thresholds, one frame enough | a tilted photo "turns" | every task is relative to the person's **baseline** (median of the first frontal frames); turns must **start frontal** |
+| blink measured in frames (2–10) | frame-rate dependent; phone sends ~1–2 frames/s | closed (< 0.6× baseline) then open (≥ 0.85×), any timing; instruction says "close for a second" because a 0.1–0.4 s blink falls between frames |
+| face lost one frame → FAILED | brittle | up to `max_face_lost_s` (1.5 s) tolerated |
+| no identity, no spoof check | anyone / any screen can do the moves | every 2nd frontal frame: ArcFace vs the captured selfie (< 0.45 → `face_changed`); anti-spoof (4.0× MiniFASNet, spec 04) on sharp frontal frames, median decides |
+| MediaPipe FaceMesh per session | extra dependency, per-session native object | buffalo_l SCRFD + 2d106 landmarks, shared with 02/03/04 |
+| `/reset` on a failed session | unlimited retries against one challenge | none: a failed session is final; start a new one |
+
+Also added: `kyc/core/face/registry.py` — one loaded instance per model file
+for the whole process (the four modules had each loaded their own copies; the
+dev machine kept running out of memory).
+
+Real-photo sanity check (tester's phone selfies): frontal yaw within ±10°
+and sign flips when mirrored; baseline eye openness 0.24–0.33; neutral
+mouth/eye-distance 0.70–0.76 (smile threshold ×1.12 ≈ 0.81).
+
+**To verify on a phone:** the TURN_LEFT/RIGHT direction
+(`turn_left_is_positive_yaw`, reasoned for an un-mirrored front-camera frame,
+not yet observed), whether blinks are caught at the real frame rate, and the
+anti-spoof scores of *video* frames (calibrated on stills so far).

@@ -16,16 +16,8 @@ import numpy as np
 from kyc.core.config import FaceQualitySettings
 from kyc.core.face.detector import Face
 from kyc.core.face.geometry import eye_openness, head_pose, iris_offsets, mouth_openness
+from kyc.core.face.sharpness import CROP_SIZE, face_crop_gray, face_sharpness  # noqa: F401 - re-exported
 from kyc.core.schemas import Reason, Severity
-
-CROP_SIZE = 256
-# Sharpness is the Laplacian variance of the face crop AFTER a light blur.
-# Raw Laplacian variance counts sensor noise as detail: a deliberately
-# shaken phone selfie (indoor light, full-resolution still) measured 256.9 -
-# 21x the floor - and 2.2x "sharper" than the video frames before it. With
-# noise added to synthetic motion blur, the raw metric caught 40% of it; with
-# this denoising, 83% (still < 0.7x the stream), no steady still flagged.
-SHARPNESS_DENOISE_SIGMA = 1.2
 
 # Check groups, by the reason codes they produce. Each runs in a mode:
 # "off", "info" (hint only) or "block". Modes come from DEFAULT_CHECK_MODES,
@@ -123,20 +115,8 @@ def context_scale(face: Face, frame_w: int, frame_h: int) -> float:
     return float(min(2 * cx / w, 2 * (frame_w - cx) / w, 2 * cy / h, 2 * (frame_h - cy) / h))
 
 
-def face_crop_gray(img: np.ndarray, face: Face) -> np.ndarray:
-    x1, y1, x2, y2 = face.int_box()
-    crop = img[max(0, y1) : max(0, y2), max(0, x1) : max(0, x2)]
-    if crop.size == 0:
-        return np.zeros((CROP_SIZE, CROP_SIZE), np.uint8)
-    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-    return cv2.resize(gray, (CROP_SIZE, CROP_SIZE), interpolation=cv2.INTER_AREA)
 
 
-def face_sharpness(gray_crop: np.ndarray) -> float:
-    """Laplacian variance of a face crop after denoising (see
-    SHARPNESS_DENOISE_SIGMA). `gray_crop` is face_crop_gray()'s output."""
-    denoised = cv2.GaussianBlur(gray_crop, (0, 0), SHARPNESS_DENOISE_SIGMA)
-    return float(cv2.Laplacian(denoised, cv2.CV_64F).var())
 
 
 def background_stats(img: np.ndarray, face: Face) -> tuple[float, float, float]:

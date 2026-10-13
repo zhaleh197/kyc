@@ -28,6 +28,7 @@ from kyc.core.face.detector import Face, FaceDetector
 from kyc.core.face.embedder import FaceEmbedder, cosine
 from kyc.core.face.landmarks import Landmarker
 from kyc.core.face.occlusion import OcclusionClassifier
+from kyc.core.face.registry import load_shared
 from kyc.core.imaging import limit_size
 from kyc.core.schemas import Decision, ModuleResult, Reason, Severity, Timer
 
@@ -79,7 +80,7 @@ class FaceCapturePipeline:
 
     def _load(self, cls, filename: str):
         s = self.settings
-        return cls.load(s.model_path(filename), s.onnx_providers, s.onnx_intra_threads)
+        return load_shared(cls, s.model_path(filename), providers=s.onnx_providers, intra_threads=s.onnx_intra_threads)
 
     def _model(self, name: str):
         if name not in self._models:

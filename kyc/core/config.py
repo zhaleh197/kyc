@@ -302,6 +302,55 @@ class AntiSpoofSettings(BaseSettings):
     min_sharpness: float = Field(4.0, description="Below this the selfie must be retaken; no spoof verdict")
 
 
+class LivenessSettings(BaseSettings):
+    """Active liveness: random tasks on the camera stream, bound to a captured
+    selfie. See specs/05-liveness.md.
+
+    Changes from the phase4 prototype: no static tasks (LOOK_STRAIGHT and
+    CLOSE_EYES pass with a photo); every task is a movement measured against
+    the person's own baseline from the first frontal frames; timing in
+    seconds, not frames (a phone sends ~1-2 frames/s here); a short face loss
+    is tolerated; identity and anti-spoof are checked on the frames.
+    All numbers are first guesses - calibrate on phone sessions.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="KYC_LIVENESS_", env_file=".env", extra="ignore")
+
+    detector_model: str = "buffalo_l_det_10g.onnx"
+    landmark_model: str = "buffalo_l_2d106det.onnx"
+    embedding_model: str = "buffalo_l_w600k_r50.onnx"
+    detector_conf: float = 0.5
+
+    task_pool: list[str] = Field(default_factory=lambda: ["BLINK", "TURN_LEFT", "TURN_RIGHT", "SMILE", "MOVE_CLOSER"])
+    tasks_per_session: int = 3
+    task_time_limit_s: float = 8.0
+    session_ttl_s: int = 120
+    max_frames_per_session: int = 400
+    max_face_lost_s: float = Field(1.5, description="Longer without exactly one face fails the session")
+
+    # Baseline: this many frontal, eyes-open frames before the first task.
+    baseline_frames: int = 2
+    frontal_max_yaw_deg: float = 12.0
+    # Task thresholds, relative to the person's own baseline.
+    turn_yaw_deg: float = 20.0
+    blink_closed_ratio: float = Field(0.6, description="Eyes count as closed below this x baseline openness")
+    blink_open_ratio: float = Field(0.85, description="...and open again above this x baseline")
+    smile_width_ratio: float = Field(1.12, description="Mouth width / eye distance, x baseline")
+    closer_size_ratio: float = Field(1.2, description="Face height x baseline for MOVE_CLOSER")
+    # The person's left in an un-mirrored front-camera frame is IMAGE RIGHT,
+    # where head_pose() reports yaw > 0. Flip if a real device shows otherwise.
+    turn_left_is_positive_yaw: bool = True
+
+    # Same person as the captured selfie, checked on frontal frames (a turned
+    # head lowers ArcFace similarity). Same-session same-person measured
+    # 0.69-0.99 on the tester; different people <= 0.3.
+    identity_min_similarity: float = 0.45
+    identity_every_n_frames: int = 2
+    # Anti-spoof on sampled frontal, sharp frames - thresholds come from
+    # KYC_ANTISPOOF_*. Video frames are lower quality than the still.
+    antispoof_every_n_frames: int = 2
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="KYC_", env_file=".env", extra="ignore")
 
@@ -322,6 +371,7 @@ class Settings(BaseSettings):
     face_quality: FaceQualitySettings = Field(default_factory=FaceQualitySettings)
     face_match: FaceMatchSettings = Field(default_factory=FaceMatchSettings)
     antispoof: AntiSpoofSettings = Field(default_factory=AntiSpoofSettings)
+    liveness: LivenessSettings = Field(default_factory=LivenessSettings)
 
     def model_path(self, name: str) -> Path:
         return self.models_dir / name

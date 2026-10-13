@@ -42,6 +42,44 @@ def context_crop(img: np.ndarray, box: tuple[float, float, float, float], scale:
     return cv2.resize(crop, (SIZE, SIZE)), s < scale
 
 
+def jitter_boxes(box: tuple[float, float, float, float], amount: float) -> list[tuple[float, float, float, float]]:
+    """The box plus a 3x3 grid of size (-amount, 0, +amount) x horizontal
+    shift (-amount, 0, +amount) variants."""
+    if amount <= 0:
+        return [box]
+    x1, y1, x2, y2 = box
+    w, h = x2 - x1, y2 - y1
+    cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+    out = []
+    for ds in (-amount, 0.0, amount):
+        for dx in (-amount, 0.0, amount):
+            nw, nh = w * (1 + ds), h * (1 + ds)
+            ncx = cx + dx * w
+            out.append((ncx - nw / 2, cy - nh / 2, ncx + nw / 2, cy + nh / 2))
+    return out
+
+
+def score_face(models, image: np.ndarray, box, jitter: float) -> tuple[float, list[dict], bool]:
+    """(live score, per-model details, context clamped) for one face: the mean
+    over models of P(real), each averaged over the box-jitter grid."""
+    boxes = jitter_boxes(tuple(box), jitter)
+    per_model, clamped_any = [], False
+    for model in models:
+        crops, clamped = zip(*(context_crop(image, b, model.scale) for b in boxes), strict=True)
+        probs = model.live_probabilities(list(crops))
+        clamped_any |= clamped[0]  # the unjittered box
+        per_model.append(
+            {
+                "name": model.name,
+                "context_scale": model.scale,
+                "live_score": round(float(probs.mean()), 4),
+                "live_score_min": round(float(probs.min()), 4),
+                "context_clamped": bool(clamped[0]),
+            }
+        )
+    return float(np.mean([m["live_score"] for m in per_model])), per_model, clamped_any
+
+
 class AntiSpoofModel:
     def __init__(self, session, scale: float, name: str):
         self._session = session

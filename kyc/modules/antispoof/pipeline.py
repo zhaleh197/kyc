@@ -12,33 +12,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-import numpy as np
-
 from kyc.core.config import Settings, get_settings
 from kyc.core.errors import CaptureNotFound
-from kyc.core.face.antispoof import AntiSpoofModel, context_crop
+from kyc.core.face.antispoof import AntiSpoofModel, jitter_boxes, score_face  # noqa: F401 - jitter_boxes re-exported
+from kyc.core.face.registry import load_shared
 from kyc.core.imaging import decode_image
 from kyc.core.schemas import Decision, ModuleResult, Reason, Timer
 
 MODULE_NAME = "antispoof"
 MODULE_VERSION = "0.1.0"
-
-
-def jitter_boxes(box: tuple[float, float, float, float], amount: float) -> list[tuple[float, float, float, float]]:
-    """The box itself plus a 3x3 grid of size (-amount, 0, +amount) x
-    horizontal shift (-amount, 0, +amount) variants."""
-    if amount <= 0:
-        return [box]
-    x1, y1, x2, y2 = box
-    w, h = x2 - x1, y2 - y1
-    cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
-    out = []
-    for ds in (-amount, 0.0, amount):
-        for dx in (-amount, 0.0, amount):
-            nw, nh = w * (1 + ds), h * (1 + ds)
-            ncx = cx + dx * w
-            out.append((ncx - nw / 2, cy - nh / 2, ncx + nw / 2, cy + nh / 2))
-    return out
 
 
 class AntiSpoofPipeline:
@@ -60,7 +42,11 @@ class AntiSpoofPipeline:
         for spec in s.antispoof.models:
             filename, _, scale = spec.rpartition(":")
             path = s.model_path(filename)
-            models.append(AntiSpoofModel.load(path, float(scale), s.onnx_providers, s.onnx_intra_threads))
+            models.append(
+                load_shared(
+                    AntiSpoofModel, path, float(scale), providers=s.onnx_providers, intra_threads=s.onnx_intra_threads
+                )
+            )
         return models
 
     def verify(self, capture_id: str) -> ModuleResult:
@@ -90,22 +76,7 @@ class AntiSpoofPipeline:
 
         with Timer() as timer:
             image = decode_image(capture.jpeg)
-            boxes = jitter_boxes(tuple(capture.face_box), cfg.box_jitter)
-            per_model, clamped_any = [], False
-            for model in self._models:
-                crops, clamped = zip(*(context_crop(image, b, model.scale) for b in boxes), strict=True)
-                probs = model.live_probabilities(list(crops))
-                clamped_any |= clamped[0]  # the unjittered box
-                per_model.append(
-                    {
-                        "name": model.name,
-                        "context_scale": model.scale,
-                        "live_score": round(float(probs.mean()), 4),
-                        "live_score_min": round(float(probs.min()), 4),
-                        "context_clamped": bool(clamped[0]),
-                    }
-                )
-            live = float(np.mean([m["live_score"] for m in per_model]))
+            live, per_model, clamped_any = score_face(self._models, image, capture.face_box, cfg.box_jitter)
 
             reasons: list[Reason] = []
             if live >= cfg.accept_above:
@@ -149,7 +120,7 @@ class AntiSpoofPipeline:
                 )
             data = {"capture_id": capture_id, "retake": False, "live_score": round(live, 4), "models": per_model,
                     "thresholds": {"accept_above": cfg.accept_above, "reject_below": cfg.reject_below},
-                    "jitter_boxes": len(boxes)}
+                    "jitter_boxes": len(jitter_boxes(capture.face_box, cfg.box_jitter))}
 
         score = min(live, 0.5) if decision is Decision.FAIL else live
         return ModuleResult(
