@@ -269,15 +269,22 @@ class AntiSpoofSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="KYC_ANTISPOOF_", env_file=".env", extra="ignore")
 
+    # Only the 4.0x model by default (2026-10-14). On the team's labelled
+    # phone selfies the 2.7x model OVERLAPS - real down to 0.098, attacks up
+    # to 0.386 - while the 4.0x model separates them (real >= 0.549, attacks
+    # <= 0.082; on the earlier Telegram set >= 0.651 / <= 0.076). The
+    # prototype's spoof_1.png: 2.7x said 0.68 "live", 4.0x said 0.15.
+    # Averaging the two dragged genuine selfies down. Add
+    # "antispoof_minifasnet_v2_s2.7.onnx:2.7" back to use both.
     models: list[str] = Field(
-        default_factory=lambda: ["antispoof_minifasnet_v2_s2.7.onnx:2.7", "antispoof_minifasnet_v1se_s4.0.onnx:4.0"],
-        description="'<file>:<context scale>' per model",
+        default_factory=lambda: ["antispoof_minifasnet_v1se_s4.0.onnx:4.0"],
+        description="'<file>:<context scale>' per model; the live score is their mean",
     )
-    # Measured 2026-10-14 on the team's phone selfies (labelled, sent via
-    # Telegram so recompressed to 962x1280): 3 real 0.455 / 0.559 / 0.914;
-    # 6 screen replays <= 0.115, 1 print 0.053. The prototype's 0.90 passed 1
-    # of 3 real selfies. Few samples - re-measure with more (spec 04 S1-S3).
-    accept_above: float = Field(0.30, description="Live score at or above this passes")
+    # 4.0x model alone, team's labelled phone selfies (2026-10-14): 12 real
+    # 0.549-0.979, 14 screen/print attacks <= 0.082. Wide margin both sides.
+    # (Mean of both models had 0.334 vs 0.194 - too close.) The prototype's
+    # 0.90 passed 1 of 3 real selfies. Re-measure as data grows (spec 04 S1-S3).
+    accept_above: float = Field(0.40, description="Live score at or above this passes")
     reject_below: float = Field(0.20, description="Live score below this fails; in between goes to review")
     # Borderline scores moved a lot with the face box: one image read
     # 0.001-0.456 with the box shifted/scaled by 10%. Averaging over that
@@ -290,7 +297,7 @@ class AntiSpoofSettings(BaseSettings):
     # gets "retake the photo", never a spoof verdict (team decision,
     # 2026-10-13). Provisional - set above the capture floor (3.0) until
     # phone frames give a measured value.
-    # Real phone selfies measured 5.48-7.68 (recompressed); 5.0 refused a
+    # Real phone selfies measured 5.48-11.5 (originals 5.55+); 5.0 refused a
     # reasonable photo as blurry. Lowered to 4.0.
     min_sharpness: float = Field(4.0, description="Below this the selfie must be retaken; no spoof verdict")
 

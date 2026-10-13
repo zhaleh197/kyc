@@ -248,3 +248,26 @@ separates far better** on phone images (real ≥ 0.65, attacks ≤ 0.08) while t
 2.7× model overlaps (a real 0.227 vs an attack 0.228); averaging drags real
 selfies down. Weighting toward the 4.0× model is the first thing to test once
 there are ≥ 15 real phone selfies.
+
+### 2026-10-14 (later) — original phone files: use the 4.0× model alone
+
+The team re-sent the selfies as files (originals, labels in the names): 11
+real (one an exact duplicate, skipped by hash) and 5 attacks. Two files
+labelled "real" scored 0.08 and 0.01 with both models agreeing; inspected,
+both are **photos of a monitor** (bezel visible) saved under the page's
+default label — relabelled in a copy (`.data/antispoof_cal_v2/`), originals
+untouched. Result, 9 real / 7 attacks:
+
+| Model | Real (min) | Attack (max) |
+|---|---|---|
+| mean of both | 0.334 | 0.194 |
+| 2.7× | **0.098** | **0.386** — overlaps |
+| **4.0×** | **0.549** | **0.082** |
+
+Same on the earlier Telegram set (4.0×: real ≥ 0.651, attacks ≤ 0.076), and on
+the prototype's `spoof_1.png` (2.7× 0.68 "live", 4.0× 0.15). **Decision: the
+4.0× model alone** (`models` default; the 2.7× file stays available), with
+**`accept_above` 0.40, `reject_below` 0.20** — on both sets all 12 real pass
+and none of the 14 attacks, with ≥ 0.15 margin each side. Still small (one
+person, one phone); keep collecting, and add phone-screen replays (none in
+this set).

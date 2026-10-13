@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 from pathlib import Path
 
 import cv2
@@ -29,7 +30,7 @@ from kyc.modules.face_capture.quality import face_crop_gray, face_sharpness
 from kyc.modules.face_capture.session import Capture
 
 ATTACKS = ("monitor", "phone_screen", "print")
-THRESHOLDS = (0.5, 0.6, 0.7, 0.75, 0.8, 0.85, 0.9)
+THRESHOLDS = (0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
 
 
 def score_folder(folder: Path) -> tuple[list[dict], float]:
@@ -43,7 +44,13 @@ def score_folder(folder: Path) -> tuple[list[dict], float]:
     pipeline = AntiSpoofPipeline(s, capture_lookup=store.get)
 
     rows = []
+    seen: set[str] = set()
     for path in sorted(folder.glob("*.jp*g")):
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        if digest in seen:  # the same image saved twice ("name (1).jpg")
+            print(f"skip (duplicate): {path.name}")
+            continue
+        seen.add(digest)
         label = path.name.split("__", 1)[0]
         img = cv2.imread(str(path))
         faces = detector.detect(img) if img is not None else []
