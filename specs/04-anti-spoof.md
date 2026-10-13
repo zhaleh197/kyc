@@ -224,3 +224,27 @@ returns `retake_low_quality` — «عکس تار یا کم‌کیفیت است؛
 consulted. Still safe: a deliberately blurred spoof cannot pass, it is only
 asked to retake. Face capture tries first to never capture such a photo
 (02 §12, relative + denoised blur checks).
+
+### 2026-10-14 — thresholds from the team's phone selfies
+
+10 labelled phone selfies (sent via Telegram, so recompressed to 962×1280 —
+labels assigned from the images and to be confirmed by the team), scored
+with `scripts/calibrate_antispoof.py`:
+
+| Label | n | Live score (mean of both models) | 2.7× model | 4.0× model |
+|---|---|---|---|---|
+| real | 3 | 0.455, 0.559, 0.914 | 0.23–0.85 | **0.65–0.98** |
+| monitor / laptop screen | 6 | ≤ 0.115 | ≤ 0.23 | **≤ 0.001** |
+| print | 1 | 0.053 | 0.030 | 0.076 |
+
+The prototype's 0.90 passed 1 of 3 real selfies — why the team saw "manual
+review" on genuine selfies (0.71, 0.89). Set: **`accept_above` 0.30,
+`reject_below` 0.20**; on this set all real pass, no attack gets through.
+**`min_sharpness` 5.0 → 4.0**: real selfies measured 5.48–7.68 and 5.0 had
+refused a reasonable photo.
+
+Observation for later, not acted on with 3 real samples: the **4.0× model
+separates far better** on phone images (real ≥ 0.65, attacks ≤ 0.08) while the
+2.7× model overlaps (a real 0.227 vs an attack 0.228); averaging drags real
+selfies down. Weighting toward the 4.0× model is the first thing to test once
+there are ≥ 15 real phone selfies.

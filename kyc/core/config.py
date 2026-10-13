@@ -273,8 +273,12 @@ class AntiSpoofSettings(BaseSettings):
         default_factory=lambda: ["antispoof_minifasnet_v2_s2.7.onnx:2.7", "antispoof_minifasnet_v1se_s4.0.onnx:4.0"],
         description="'<file>:<context scale>' per model",
     )
-    accept_above: float = Field(0.90, description="Live score at or above this passes")
-    reject_below: float = Field(0.50, description="Live score below this fails; in between goes to review")
+    # Measured 2026-10-14 on the team's phone selfies (labelled, sent via
+    # Telegram so recompressed to 962x1280): 3 real 0.455 / 0.559 / 0.914;
+    # 6 screen replays <= 0.115, 1 print 0.053. The prototype's 0.90 passed 1
+    # of 3 real selfies. Few samples - re-measure with more (spec 04 S1-S3).
+    accept_above: float = Field(0.30, description="Live score at or above this passes")
+    reject_below: float = Field(0.20, description="Live score below this fails; in between goes to review")
     # Borderline scores moved a lot with the face box: one image read
     # 0.001-0.456 with the box shifted/scaled by 10%. Averaging over that
     # grid makes the score depend less on which detector drew the box.
@@ -286,7 +290,9 @@ class AntiSpoofSettings(BaseSettings):
     # gets "retake the photo", never a spoof verdict (team decision,
     # 2026-10-13). Provisional - set above the capture floor (3.0) until
     # phone frames give a measured value.
-    min_sharpness: float = Field(5.0, description="Below this the selfie must be retaken; no spoof verdict")
+    # Real phone selfies measured 5.48-7.68 (recompressed); 5.0 refused a
+    # reasonable photo as blurry. Lowered to 4.0.
+    min_sharpness: float = Field(4.0, description="Below this the selfie must be retaken; no spoof verdict")
 
 
 class Settings(BaseSettings):

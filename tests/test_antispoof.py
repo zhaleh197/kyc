@@ -80,8 +80,8 @@ def test_jitter_grid():
 
 @pytest.mark.parametrize(
     ("live", "decision", "code"),
-    [((0.98, 0.95), Decision.PASS, None), ((0.8, 0.7), Decision.REVIEW, "spoof_uncertain"),
-     ((0.2, 0.1), Decision.FAIL, "spoof_detected")],
+    [((0.98, 0.95), Decision.PASS, None), ((0.3, 0.2), Decision.REVIEW, "spoof_uncertain"),
+     ((0.1, 0.05), Decision.FAIL, "spoof_detected")],
 )
 def test_decision_bands(live, decision, code):
     p, models = build(live)
@@ -112,7 +112,7 @@ def test_unknown_capture():
 
 
 def test_api_takes_only_a_capture_id():
-    p, _ = build((0.2, 0.1))
+    p, _ = build((0.1, 0.05))
     app.dependency_overrides[get_pipeline] = lambda: p
     try:
         client = TestClient(app)
