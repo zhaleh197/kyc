@@ -163,10 +163,19 @@ class FaceMatchPipeline:
         angles = (0, *FALLBACK_ANGLES) if cfg.rotation_fallback else (0,)
         for angle in angles:
             image = padded if angle == 0 else _rotate(padded, angle)
-            faces = detector.detect(image, cfg.detector_conf)
+            # Only an upright face counts: SCRFD also finds upside-down faces,
+            # and an upside-down card portrait then scored 0.09 against its
+            # owner instead of 0.44. Eyes above the mouth = upright.
+            faces = [f for f in detector.detect(image, cfg.detector_conf) if _upright(f)]
             if faces:
                 return ReferenceFace(image=image, face=faces[0], faces_found=len(faces), rotation=angle)
         return None
+
+
+def _upright(face: Face) -> bool:
+    eyes_y = (face.kps[0][1] + face.kps[1][1]) / 2
+    mouth_y = (face.kps[3][1] + face.kps[4][1]) / 2
+    return bool(eyes_y < mouth_y)
 
 
 def _rotate(img: np.ndarray, angle: float) -> np.ndarray:

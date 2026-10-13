@@ -42,6 +42,9 @@ class DocumentOcrData(BaseModel):
     quality: dict[str, float] = Field(default_factory=dict)
     portrait_base64: str | None = Field(None, description="Cropped photo, only when requested")
     card_base64: str | None = Field(None, description="Rectified card, only when requested")
+    orientation: dict[str, Any] | None = Field(
+        None, description="How the card was straightened: quarter turn (deg), deskew (deg), layout fit"
+    )
 
 
 class OcrRequestOptions(BaseModel):

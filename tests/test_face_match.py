@@ -167,3 +167,11 @@ def test_api_verify_takes_a_capture_id_not_a_selfie():
         assert set(fields) == {"reference", "capture_id"}  # no selfie image field
     finally:
         app.dependency_overrides.clear()
+
+
+def test_an_upside_down_face_is_not_accepted_as_the_reference():
+    upside_down = face()
+    upside_down.kps[:, 1] = 300 - upside_down.kps[:, 1]  # mouth above the eyes
+    pipeline, det = build(faces=[upside_down])
+    result = pipeline.verify(portrait(), "cap-1")
+    assert codes(result) == {"reference_no_face"}  # never matched against an upside-down face

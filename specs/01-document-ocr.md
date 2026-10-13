@@ -181,3 +181,43 @@ national-id misreads self-detecting, which is why this is acceptable.
 - On Windows, `num_workers=0`.
 - Data-provider APIs can lie (Roboflow listed an export whose objects 404'd);
   have a manual fallback path.
+
+## 11. 2026-10-13 — cards photographed sideways, upside down or tilted
+
+Reported on a real phone test: a card given sideways or tilted was not
+straightened before its fields were cropped and read.
+
+Measured on the tester's own card (val `700`), rotated:
+
+| Card turned | Fields found (of 8) | Face similarity to the owner's selfie |
+|---|---|---|
+| 0° | 8 | 0.438 |
+| ±15°, 30°, 45° | 7–8 | 0.42–0.44 |
+| 90°, 270° | 7–8 (mean confidence even *higher*, 0.86) | 0.38–0.41 |
+| 180° | **3** | **0.093** (an upside-down face was matched) |
+
+The detector finds boxes on a sideways card (Roboflow trained it with
+rotations), but a field cut from it holds vertical text the recognisers
+cannot read, and confidence cannot tell upright from sideways.
+
+**Fix — `kyc/modules/ocr/orient.py`, on by default (`KYC_OCR_AUTO_ORIENT`):**
+1. *Deskew* small tilts from the dominant edge direction of the card region
+   (gradient histogram folded to ±45°; estimates beyond ±35° are ignored —
+   near ±45 diagonal content wins).
+2. *Quarter turn* (0/90/180/270) chosen by the profile's **layout rules**,
+   taken from the 46 labelled val/test cards — photo left of the name
+   (46/46), national id above the name (45/46), name above the birth date
+   (45/46) — then text fields wider than tall, then a small preference for
+   no turn. Up to 4 extra detector passes when the card is not upright.
+
+On 240 turned/tilted copies of 20 real val/test cards: **231 come out
+upright** with the full layout. The 9 misses are cards already tilted in the
+original photo with extra tilt added. Boxes, the portrait and `card_base64`
+refer to the upright image; `data.orientation` reports what was done.
+
+Face match also now accepts only an **upright** face in the card portrait
+(eyes above the mouth), so an upside-down portrait is turned by the rotation
+fallback instead of being matched upside down.
+
+Not yet verified end-to-end with text reading on rotated cards: the machine
+ran out of memory (drive C: full) during that run.

@@ -161,6 +161,7 @@ def test_rectify_flag_controls_the_geometry_the_detector_sees(good_values):
         settings = Settings(
             ocr=OcrSettings(
                 rectify=rectify_on,
+                auto_orient=False,  # orientation has its own tests (test_orient.py)
                 min_sharpness=1.0,
                 min_brightness=10.0,
                 max_brightness=250.0,

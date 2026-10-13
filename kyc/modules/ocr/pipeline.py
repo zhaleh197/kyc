@@ -25,6 +25,7 @@ from kyc.core.schemas import Decision, ModuleResult, Reason, Severity, Timer
 
 from . import normalize, rectify
 from .detector import Detection, FieldDetector, best_per_class
+from .orient import orient
 from .profiles import DocumentProfile, FieldKind, FieldSpec, get_profile
 from .recognizers import TextRecognizer, get_recognizer
 from .schemas import DocumentOcrData, FieldResult
@@ -133,7 +134,20 @@ class DocumentOcrPipeline:
                 )
                 return self._envelope(Decision.FAIL, 0.0, reasons, empty, timer)
 
-            detections = self._detect(card, profile)
+            orientation = None
+            if cfg.auto_orient:
+                # Straighten a sideways / upside-down / tilted card before any
+                # field is cropped: a field cut from a sideways card holds
+                # vertical text the recognisers cannot read. Boxes, the
+                # portrait and `card_base64` all refer to the upright image.
+                detector = self._detector_factory(profile)  # one instance for every candidate turn
+                o = orient(card, lambda im: detector.detect(im, cfg.detector_conf, cfg.detector_iou), profile)
+                card, detections = o.image, o.detections
+                orientation = {
+                    "rotation": o.rotation, "deskew_deg": o.deskew_deg, "layout_score": round(o.layout_score, 2)
+                }
+            else:
+                detections = self._detect(card, profile)
             located = best_per_class(detections)
 
             fields, field_reasons = self._read_fields(card, profile, located)
@@ -152,6 +166,7 @@ class DocumentOcrPipeline:
                 quality=metrics,
                 portrait_base64=self._portrait(card, profile, located) if return_portrait else None,
                 card_base64=encode_jpeg_base64(card) if return_card else None,
+                orientation=orientation,
             )
             decision, score = self._decide(reasons, fields)
 

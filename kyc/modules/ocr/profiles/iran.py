@@ -166,6 +166,9 @@ IR_NATIONAL_CARD_FRONT = DocumentProfile(
     name_fa="کارت ملی هوشمند ایران (رو)",
     detector_model="ir_national_card_front_fields.onnx",
     class_names=IR_CLASS_NAMES,
+    # From the 46 labelled val/test cards: photo left of the name 46/46,
+    # national id above the name 45/46, name above the birth date 45/46.
+    layout=(("img", "left_of", "name"), ("idnumber", "above", "name"), ("name", "above", "birthday")),
     validator=_validate_iran_front,
     fields=(
         FieldSpec("card", "idcard", FieldKind.CONTAINER, "کارت ملی", "ID card"),

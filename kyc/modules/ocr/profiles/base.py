@@ -50,6 +50,10 @@ class DocumentProfile:
     class_names: tuple[str, ...] = ()
     # Physical aspect ratio of the document, used to rectify the card to a
     # canonical size before field detection. ID-1 (credit-card) is 85.6x53.98mm.
+    # Spatial rules that hold on an upright card, (detector class, relation,
+    # detector class) with relation "left_of" or "above". Used to find the
+    # card's orientation when it is photographed sideways or upside down.
+    layout: tuple[tuple[str, str, str], ...] = ()
     aspect_ratio: float = 85.6 / 53.98
     rectified_width: int = 1024
     validator: Callable[[dict], list[Reason]] | None = field(default=None, compare=False)

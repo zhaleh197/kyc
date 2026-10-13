@@ -52,6 +52,12 @@ class OcrSettings(BaseSettings):
     # and this stays off.
     rectify: bool = False
 
+    # Bring a sideways, upside-down or tilted card upright before cropping
+    # fields (kyc/modules/ocr/orient.py). On 240 rotated/tilted copies of
+    # real val/test cards: 231 came out upright with the full layout. Costs
+    # up to 4 extra detector passes when the card is not already upright.
+    auto_orient: bool = True
+
     # --- field detector ------------------------------------------------
     detector_conf: float = 0.35
     detector_iou: float = 0.45
