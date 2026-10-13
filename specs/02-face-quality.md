@@ -414,3 +414,28 @@ movement; the iris heuristic catches large glances, not this.
 3. A learned gaze model was considered and not chosen for now (days of work,
    training-data licences, and still hard at 720p). Revisit only if a
    passport-style "eyes on the lens" rule becomes a business requirement.
+
+### 2026-10-13 — blur, judged within the session
+
+On a phone, a selfie deliberately blurred by shaking the phone was accepted.
+Measured on the repo's photos with synthetic motion blur (2/4/8% of the face
+width, three directions):
+
+| Check | Steady images wrongly flagged | Motion blur caught (2% / 4% / 8%) |
+|---|---|---|
+| absolute floor, Laplacian < 12 (as shipped) | — | 9% / 22% / 44% |
+| best absolute variant (contrast/scale-normalised) | 10% | 39% / 55% / 67% |
+| **still < 0.7 × the stream frames that qualified it** | **0%** (steady still ≥ 0.87×) | **80% / 92% / 98%** |
+
+No single number separates sharp from blurred across cameras — "sharp"
+photos from different devices vary too much — but within one session the
+person, camera and light are the same. Added (same `face_blurry` code, so
+the "sharpness" check mode governs them):
+
+- the still must be ≥ `still_min_sharpness_ratio` (0.7) × the median of the
+  stream frames that qualified it — shaking at the moment of capture;
+- a stream frame < `stream_min_sharpness_ratio` (0.5) × the session's
+  sharpest frame counts as blurry — shaking during the video.
+
+The absolute floor stays for a session that is blurry from the start; it
+should be recalibrated on phone frames (team rule: not on the old webcam).

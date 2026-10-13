@@ -678,3 +678,45 @@ def test_unknown_mode_is_rejected():
     p.settings.debug = True
     with pytest.raises(InvalidInput):
         p.start({"gaze": "maybe"})
+
+
+# ------------------------------------------------------------------ relative blur
+
+
+def test_a_still_shaken_at_capture_is_rejected_even_above_the_absolute_floor():
+    """The real phone failure: steady video, then the phone was shaken as the
+    photo was taken. blur=0.8 is still far above min_sharpness (~47 vs 12),
+    but far below the stream frames it follows (~1300)."""
+    p = build()
+    sid = p.start().session_id
+    p.submit_frame(sid, textured_frame())
+    assert p.submit_frame(sid, textured_frame())["state"] == "READY_FOR_STILL"
+    fb = p.submit_still(sid, textured_frame(blur=0.8))
+    assert fb["state"] == "SEARCHING"
+    assert fb["hints"][0]["code"] == "face_blurry"
+
+
+def test_a_steady_still_is_not_flagged_by_the_relative_check():
+    p = build()
+    sid = p.start().session_id
+    p.submit_frame(sid, textured_frame())
+    p.submit_frame(sid, textured_frame())
+    assert p.submit_still(sid, textured_frame())["state"] == "CAPTURED"
+
+
+def test_relative_blur_follows_the_sharpness_check_mode():
+    p = build()
+    p.settings.debug = True
+    sid = p.start({"sharpness": "off"}).session_id
+    p.submit_frame(sid, textured_frame())
+    p.submit_frame(sid, textured_frame())
+    assert p.submit_still(sid, textured_frame(blur=0.8))["state"] == "CAPTURED"
+
+
+def test_shaking_during_the_video_is_caught_once_a_sharp_frame_was_seen():
+    p = build(frames_required_ok=10)
+    sid = p.start().session_id
+    for _ in range(3):
+        p.submit_frame(sid, textured_frame())
+    fb = p.submit_frame(sid, textured_frame(blur=0.8))
+    assert "face_blurry" in {h["code"] for h in fb["hints"]}

@@ -121,6 +121,20 @@ class FaceQualitySettings(BaseSettings):
     # does not depend on camera resolution. Test photos: 10-573 sharp, 3-47
     # after a sigma=3 blur - the ranges overlap; webcam calibration needed.
     min_sharpness: float = 12.0
+    # Relative blur, within one capture session (same person, camera, light).
+    # No single absolute number separates sharp from motion-blurred across
+    # cameras: on the repo's photos with synthetic motion blur, the floor of
+    # 12 caught only 9-44% of it, and contrast/scale-normalised variants did
+    # little better (AUC ~0.8). Relative to the same session: a steady still
+    # measured >= 0.87x the stream frames; below 0.7x caught 80/92/98% of
+    # motion blur of 2/4/8% of the face width, with no steady still flagged.
+    # A real phone test passed a deliberately shaken selfie before this.
+    still_min_sharpness_ratio: float = Field(
+        0.7, description="The still must be at least this sharp relative to the stream frames that qualified it"
+    )
+    stream_min_sharpness_ratio: float = Field(
+        0.5, description="A stream frame below this fraction of the session's sharpest frame counts as blurry"
+    )
     min_brightness: float = Field(50.0, description="Mean luma floor on the face crop (0-255)")
     max_brightness: float = Field(210.0, description="Mean luma ceiling on the face crop (0-255)")
     max_illumination_asymmetry: float = Field(

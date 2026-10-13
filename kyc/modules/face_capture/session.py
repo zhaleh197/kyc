@@ -60,6 +60,12 @@ class CaptureSession:
     recent_codes: list = field(default_factory=list)
     shown_hint: str | None = None
     last_reasons_by_code: list = field(default_factory=list)
+    # Sharpness history for relative blur checks: the sharpest frame so far,
+    # the passing frames of the current streak, and the reference the still
+    # is compared to once the stream qualifies.
+    max_sharpness: float = 0.0
+    streak_sharpness: list = field(default_factory=list)
+    reference_sharpness: float = 0.0
     # Per-session check modes (dev page, debug mode only).
     check_modes: dict = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)

@@ -297,9 +297,14 @@ def assess(
                 )
 
     apply_modes(out, resolve_modes(cfg.check_modes, session_modes))
-    rank = {code: i for i, code in enumerate(HINT_PRIORITY)}
-    out.reasons.sort(key=lambda r: (r.severity.value != "error", rank.get(r.code, len(rank))))
+    order_hints(out)
     return out
+
+
+def order_hints(a: FrameAssessment) -> None:
+    """Blocking findings first, in HINT_PRIORITY order."""
+    rank = {code: i for i, code in enumerate(HINT_PRIORITY)}
+    a.reasons.sort(key=lambda r: (r.severity.value != "error", rank.get(r.code, len(rank))))
 
 
 def quality_score(metrics: dict[str, float], cfg: FaceQualitySettings) -> float:

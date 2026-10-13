@@ -131,6 +131,14 @@ class FaceCapturePipeline:
         with session.lock:
             self._accept_input(session, (CaptureState.SEARCHING, CaptureState.READY_FOR_STILL))
             a = self.assess(image, session.check_modes)
+            sharpness = a.metrics.get("sharpness")
+            if sharpness and session.frames_seen > 2:
+                self._flag_relative_blur(
+                    session, a, session.max_sharpness, cfg.stream_min_sharpness_ratio,
+                    "Image is blurry compared with a moment ago", "تصویر تار شد؛ گوشی را ثابت نگه دارید",
+                )
+            if sharpness:
+                session.max_sharpness = max(session.max_sharpness, sharpness)
             session.last_hints = a.reasons
             if session.state is CaptureState.READY_FOR_STILL:
                 # Keep guiding while the client takes the still; qualification stands.
@@ -138,11 +146,13 @@ class FaceCapturePipeline:
 
             if a.ok:
                 session.ok_streak += 1
+                session.streak_sharpness.append(sharpness or 0.0)
                 score = quality.quality_score(a.metrics, cfg)
                 if session.candidate is None or score > session.candidate[0]:
                     session.candidate = (score, _jpeg(image, cfg.selfie_jpeg_quality), a, image)
                 if session.ok_streak >= cfg.frames_required_ok:
                     if cfg.require_still:
+                        session.reference_sharpness = float(np.median(session.streak_sharpness))
                         _, _, best, best_image = session.candidate
                         session.stream_embedding = self._model("embedder").embed(best_image, best.face)
                         session.state = CaptureState.READY_FOR_STILL
@@ -151,6 +161,7 @@ class FaceCapturePipeline:
                         self._capture(session, jpeg, best, score)
             else:
                 session.ok_streak = 0
+                session.streak_sharpness = []
                 session.candidate = None
             return self._feedback(session, a)
 
@@ -162,6 +173,13 @@ class FaceCapturePipeline:
             self._accept_input(session, (CaptureState.READY_FOR_STILL,))
             image = limit_size(image, cfg.max_still_side)
             a = self.assess(image, session.check_modes)
+            # Shaking the phone at the moment of capture blurs only the still:
+            # compare it with the steady frames that qualified the stream.
+            self._flag_relative_blur(
+                session, a, session.reference_sharpness, cfg.still_min_sharpness_ratio,
+                "The photo is blurrier than the video before it",
+                "عکس تار شد؛ گوشی را ثابت نگه دارید و دوباره تلاش کنید",
+            )
             if a.face is not None and a.ok:
                 similarity = cosine(session.stream_embedding, self._model("embedder").embed(image, a.face))
                 a.metrics["still_similarity"] = round(similarity, 4)
@@ -182,6 +200,7 @@ class FaceCapturePipeline:
                 session.stills_rejected += 1
                 session.state = CaptureState.SEARCHING
                 session.ok_streak = 0
+                session.streak_sharpness = []
                 session.candidate = None
                 session.stream_embedding = None
             return self._feedback(session, a)
@@ -228,6 +247,23 @@ class FaceCapturePipeline:
         return self.store.get_capture(capture_id)
 
     # ---------------------------------------------------------------- helpers
+
+    def _flag_relative_blur(
+        self, session: CaptureSession, a: quality.FrameAssessment, reference: float, ratio: float, en: str, fa: str
+    ) -> None:
+        """Add a `face_blurry` finding when this image is much less sharp than
+        `reference` from the same session. Same code as the absolute check,
+        so the "sharpness" check mode governs both."""
+        sharpness = a.metrics.get("sharpness")
+        if not sharpness or reference <= 0:
+            return
+        a.metrics["sharpness_ratio"] = round(sharpness / reference, 3)
+        if sharpness >= ratio * reference or any(r.code == "face_blurry" for r in a.reasons):
+            return
+        a.reasons.append(Reason.error("face_blurry", en, fa))
+        cfg = self.settings.face_quality
+        quality.apply_modes(a, quality.resolve_modes(cfg.check_modes, session.check_modes))
+        quality.order_hints(a)
 
     def _session(self, session_id: str) -> CaptureSession:
         session = self.store.get(session_id)
