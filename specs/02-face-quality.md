@@ -439,3 +439,17 @@ the "sharpness" check mode governs them):
 
 The absolute floor stays for a session that is blurry from the start; it
 should be recalibrated on phone frames (team rule: not on the old webcam).
+
+**Same day, second phone test — noise fooled the metric.** A shaken selfie
+still passed, with `sharpness` 256.9 (21× the floor) and `sharpness_ratio`
+2.19 — the blurred still measured *twice as sharp* as the video before it.
+Cause: raw Laplacian variance counts sensor noise as detail, and an indoor
+full-resolution phone still is noisy. Reproduced with noise added to the
+synthetic motion blur: the raw metric then caught 40%. **Sharpness is now
+measured after a σ=1.2 Gaussian denoise**: steady still ≥ 1.01× the stream,
+blurred median 0.59×, 83% caught at < 0.7×, none steady flagged. The
+absolute floor moves to that scale: `min_sharpness` 3.0 (sharp repo photos
+6–34, Gaussian-blurred ones 1.7–5). Provisional until phone frames.
+
+Anti-spoof called that blurred live selfie a spoof (0.465): blur removes the
+texture the models read. Catching blur at capture is the real fix.

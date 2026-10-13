@@ -19,6 +19,13 @@ from kyc.core.face.geometry import eye_openness, head_pose, iris_offsets, mouth_
 from kyc.core.schemas import Reason, Severity
 
 CROP_SIZE = 256
+# Sharpness is the Laplacian variance of the face crop AFTER a light blur.
+# Raw Laplacian variance counts sensor noise as detail: a deliberately
+# shaken phone selfie (indoor light, full-resolution still) measured 256.9 -
+# 21x the floor - and 2.2x "sharper" than the video frames before it. With
+# noise added to synthetic motion blur, the raw metric caught 40% of it; with
+# this denoising, 83% (still < 0.7x the stream), no steady still flagged.
+SHARPNESS_DENOISE_SIGMA = 1.2
 
 # Check groups, by the reason codes they produce. Each runs in a mode:
 # "off", "info" (hint only) or "block". Modes come from DEFAULT_CHECK_MODES,
@@ -210,7 +217,8 @@ def assess(
 
     # --- image quality, on the face only
     gray = face_crop_gray(img, face)
-    m["sharpness"] = round(float(cv2.Laplacian(gray, cv2.CV_64F).var()), 2)
+    denoised = cv2.GaussianBlur(gray, (0, 0), SHARPNESS_DENOISE_SIGMA)
+    m["sharpness"] = round(float(cv2.Laplacian(denoised, cv2.CV_64F).var()), 3)
     mean = float(gray.mean())
     m["brightness"] = round(mean, 2)
     left, right = gray[:, : CROP_SIZE // 2].mean(), gray[:, CROP_SIZE // 2 :].mean()

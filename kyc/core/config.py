@@ -117,10 +117,11 @@ class FaceQualitySettings(BaseSettings):
     min_context_scale: float = 0.0
 
     # --- image quality on the face crop --------------------------------
-    # Laplacian variance on the face crop resized to 256x256, so the number
-    # does not depend on camera resolution. Test photos: 10-573 sharp, 3-47
-    # after a sigma=3 blur - the ranges overlap; webcam calibration needed.
-    min_sharpness: float = 12.0
+    # Laplacian variance of the 256x256 face crop after a sigma-1.2 denoise
+    # (quality.SHARPNESS_DENOISE_SIGMA). On that scale the repo's sharp photos
+    # read 6-34 (one poor photo 2.5) and the same photos Gaussian-blurred
+    # (sigma 3) 1.7-5. Provisional: recalibrate on phone frames.
+    min_sharpness: float = 3.0
     # Relative blur, within one capture session (same person, camera, light).
     # No single absolute number separates sharp from motion-blurred across
     # cameras: on the repo's photos with synthetic motion blur, the floor of

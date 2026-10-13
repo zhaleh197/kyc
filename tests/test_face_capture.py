@@ -84,7 +84,13 @@ def textured_frame(
     sideways in eye-widths, `iris_drop` down in pixels."""
     rng = np.random.default_rng(0)
     frame = np.full((FRAME_H, FRAME_W, 3), brightness, np.uint8)
-    face = rng.integers(brightness - 40, brightness + 40, (220, 160, 3)).astype(np.uint8)
+    face = np.clip(rng.integers(brightness - 20, brightness + 20, (220, 160, 3)), 0, 255).astype(np.uint8)
+    # Real structure (not just noise - the sharpness metric denoises first):
+    # a grid of thin dark lines, like hair, brows and lid edges.
+    for k in range(4, 160, 8):
+        face[:, k : k + 2] = max(brightness - 70, 0)
+    for k in range(4, 220, 10):
+        face[k : k + 2, :] = max(brightness - 70, 0)
     frame[130:350, 240:400] = face
     for _, outline in EYE_OUTLINES:  # white sclera inside each eye outline
         cv2.fillPoly(frame, [landmarks_106()[list(outline)].astype(np.int32)], (235, 235, 235))
@@ -231,7 +237,7 @@ def test_framing_checks():
 def test_blurry_dark_and_bright_frames():
     assert "face_blurry" in codes(check([make_face()], frame=textured_frame(blur=6)).reasons)
     assert "face_too_dark" in codes(check([make_face()], frame=textured_frame(brightness=45)).reasons)
-    assert "face_too_bright" in codes(check([make_face()], frame=textured_frame(brightness=215)).reasons)
+    assert "face_too_bright" in codes(check([make_face()], frame=textured_frame(brightness=250)).reasons)
 
 
 def test_closed_eyes_block():
