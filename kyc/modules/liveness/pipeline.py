@@ -172,6 +172,8 @@ class LivenessPipeline:
 
     def _check_live(self, session: LivenessSession, image: np.ndarray, face: Face) -> None:
         cfg, spoof = self.settings.liveness, self.settings.antispoof
+        if cfg.antispoof_on_frames == "off":
+            return
         if session.live_scores and session.frames_seen % cfg.antispoof_every_n_frames:
             return
         if face_sharpness(face_crop_gray(image, face)) < spoof.min_sharpness:
@@ -228,18 +230,27 @@ class LivenessPipeline:
             live = float(np.median(session.live_scores)) if session.live_scores else None
             if session.state is not LivenessState.VERIFIED:
                 reasons.append(session.failure or _fail("not_verified", "Not verified", "تأیید نشد"))
-            elif live is None:
-                reasons.append(Reason.warn("antispoof_not_checked", "No frame was sharp enough to check for spoofing",
-                                           "تصویر برای بررسی جعل به اندازهٔ کافی واضح نبود"))
-            elif live < spoof.reject_below:
-                reasons.append(_fail("spoof_during_session", f"The video looks like a screen or print ({live:.2f})",
-                                     "تصویر ویدیو به‌نظر صفحه‌نمایش یا عکس چاپی است"))
-            elif live < spoof.accept_above:
-                reasons.append(Reason.warn("spoof_uncertain", f"Liveness of the video is inconclusive ({live:.2f})",
-                                           "زنده بودن تصویر قطعی نیست و بررسی دستی لازم است"))
+            elif self.settings.liveness.antispoof_on_frames == "block":
+                if live is None:
+                    reasons.append(Reason.warn(
+                        "antispoof_not_checked", "No frame was sharp enough to check for spoofing",
+                        "تصویر برای بررسی جعل به اندازهٔ کافی واضح نبود"))
+                elif live < spoof.reject_below:
+                    reasons.append(_fail(
+                        "spoof_during_session", f"The video looks like a screen or print ({live:.2f})",
+                        "تصویر ویدیو به‌نظر صفحه‌نمایش یا عکس چاپی است"))
+                elif live < spoof.accept_above:
+                    reasons.append(Reason.warn(
+                        "spoof_uncertain", f"Liveness of the video is inconclusive ({live:.2f})",
+                        "زنده بودن تصویر قطعی نیست و بررسی دستی لازم است"))
+            elif self.settings.liveness.antispoof_on_frames == "info" and live is not None:
+                # Reported, not judged: thresholds are calibrated on stills only.
+                reasons.append(Reason.info(
+                    "antispoof_video_score", f"Anti-spoof on video frames: median {live:.2f} (not judged)",
+                    f"امتیاز زنده بودن روی ویدیو: {live:.2f} (فقط گزارش)"))
             if any(r.severity is Severity.ERROR for r in reasons):
                 decision = Decision.FAIL
-            elif reasons:
+            elif any(r.severity is Severity.WARN for r in reasons):
                 decision = Decision.REVIEW
             else:
                 decision = Decision.PASS
@@ -255,9 +266,12 @@ class LivenessPipeline:
                 "live_score_median": round(live, 4) if live is not None else None,
                 "live_score_min": min(session.live_scores) if session.live_scores else None,
                 "antispoof_checks": len(session.live_scores),
+                "antispoof_on_frames": self.settings.liveness.antispoof_on_frames,
+                # Per-frame scores, to calibrate video-frame thresholds later.
+                "live_scores": session.live_scores,
             }
             score = done / len(session.tasks)
-            if live is not None:
+            if live is not None and self.settings.liveness.antispoof_on_frames == "block":
                 score = min(score, live)
             if decision is Decision.FAIL:
                 score = min(score, 0.5)

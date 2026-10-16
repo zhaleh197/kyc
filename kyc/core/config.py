@@ -347,7 +347,15 @@ class LivenessSettings(BaseSettings):
     identity_min_similarity: float = 0.45
     identity_every_n_frames: int = 2
     # Anti-spoof on sampled frontal, sharp frames - thresholds come from
-    # KYC_ANTISPOOF_*. Video frames are lower quality than the still.
+    # KYC_ANTISPOOF_*, which were calibrated on STILLS. Video frames are
+    # lower quality (720p, JPEG 85, moving face) and score lower: the first
+    # real phone session of a live tester failed as "screen or print" on
+    # them. Until those thresholds are calibrated on video frames this is
+    # "info" - scores are reported, the decision is not changed. The still
+    # itself already passed anti-spoof (04) and every frontal frame here must
+    # match it (identity), so a different face cannot be swapped in.
+    # off | info | block.
+    antispoof_on_frames: Literal["off", "info", "block"] = "info"
     antispoof_every_n_frames: int = 2
 
 

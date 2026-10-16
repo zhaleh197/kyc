@@ -198,9 +198,21 @@ def test_someone_else_taking_over_fails():
     assert {r.code for r in p.result(sid).reasons} == {"face_changed"}
 
 
-def test_a_screen_doing_the_tasks_fails_on_anti_spoof():
+def test_video_anti_spoof_is_reported_not_judged_by_default():
+    """Thresholds are calibrated on stills; a live tester's video frames
+    scored low on a phone. Default "info": reported, decision unchanged."""
     script = Script([FRONT, FRONT, m(eye_openness=0.1), FRONT, m(mouth_width=1.2)])
     p = build(script, live=0.05)
+    sid, _ = drive(p, 5)
+    result = p.result(sid)
+    assert result.decision is Decision.PASS
+    assert "antispoof_video_score" in {r.code for r in result.reasons}
+    assert result.data["live_scores"]
+
+
+def test_a_screen_doing_the_tasks_fails_on_anti_spoof_when_blocking():
+    script = Script([FRONT, FRONT, m(eye_openness=0.1), FRONT, m(mouth_width=1.2)])
+    p = build(script, live=0.05, antispoof_on_frames="block")
     sid, fb = drive(p, 5)
     assert fb["state"] == "VERIFIED"  # the moves were made...
     result = p.result(sid)

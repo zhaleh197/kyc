@@ -176,3 +176,19 @@ mouth/eye-distance 0.70–0.76 (smile threshold ×1.12 ≈ 0.81).
 (`turn_left_is_positive_yaw`, reasoned for an un-mirrored front-camera frame,
 not yet observed), whether blinks are caught at the real frame rate, and the
 anti-spoof scores of *video* frames (calibrated on stills so far).
+
+### 2026-10-17 — first phone session: a live tester failed as "screen or print"
+
+The tasks were completed, then the result failed with
+`spoof_during_session`: anti-spoof on the **video frames** scored the live
+tester low. Its thresholds were calibrated on **stills** (full-resolution,
+JPEG 95, steady); liveness frames are 720p, JPEG 85, with the face moving.
+Same model, worse input, lower scores — a threshold applied to data it was
+not set on.
+
+**Fix:** `antispoof_on_frames` = `off | info | block`, default **`info`**: the
+per-frame scores are computed and reported (`data.live_scores`, an info
+reason) but do not change the decision until thresholds exist for video
+frames. Not weaker in practice: the still already passed anti-spoof (04)
+and every frontal frame must match it (identity). Also fixed: an info
+reason no longer sends the result to review — only warnings do.
