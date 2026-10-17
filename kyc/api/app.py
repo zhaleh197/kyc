@@ -15,7 +15,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from kyc.api import access
+from kyc.api import access, pages
 from kyc.core.config import get_settings
 from kyc.core.errors import KycError
 from kyc.modules.antispoof.router import router as antispoof_router
@@ -70,6 +70,7 @@ def create_app() -> FastAPI:
     app.include_router(antispoof_router)
     app.include_router(liveness_router)
     app.include_router(cases_router)
+    app.include_router(pages.router)
     if settings.debug:
         from kyc.api.dev import router as dev_router
 

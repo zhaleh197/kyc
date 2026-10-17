@@ -113,3 +113,9 @@ def test_archive_failure_does_not_lose_the_verdict(tmp_path):
                       archive=Broken())
     verdict = svc.finalize(full_case(svc))
     assert verdict["verdict"] == "approved" and verdict["archived"] is False
+
+
+def test_the_customer_app_and_logo_are_served_without_a_code(gated):
+    page = gated.get("/")
+    assert page.status_code == 200 and "/v1/cases" in page.text and "X-Access-Code" in page.text
+    assert gated.get("/assets/logo.svg").headers["content-type"].startswith("image/svg+xml")

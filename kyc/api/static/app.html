@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1f4e79">
+<title>احراز هویت اکام</title>
+<style>
+  :root {
+    --brand:#1f4e79; --brand-2:#2f6ea8; --bg:#f3f6fa; --card:#fff; --ink:#18212d; --muted:#667386; --line:#e2e8f0;
+    --ok:#15803d; --ok-bg:#e8f6ee; --warn:#a16207; --warn-bg:#fdf5e1; --err:#b42318; --err-bg:#fdecea; --radius:16px;
+  }
+  * { box-sizing:border-box; }
+  html, body { margin:0; background:var(--bg); color:var(--ink); font-family:Vazirmatn, Tahoma, "Segoe UI", sans-serif; }
+  header { background:#fff; border-bottom:1px solid var(--line); position:sticky; top:0; z-index:5; }
+  .bar { max-width:640px; margin:0 auto; padding:10px 16px; display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  .bar img { height:36px; }
+  .bar .who { font-size:12px; color:var(--muted); }
+  main { max-width:640px; margin:0 auto; padding:16px 16px 40px; }
+  .steps { display:flex; gap:6px; margin:4px 0 16px; }
+  .steps div { flex:1; height:6px; border-radius:99px; background:var(--line); }
+  .steps div.on { background:var(--brand-2); } .steps div.done { background:var(--brand); }
+  .card { background:var(--card); border-radius:var(--radius); padding:20px; box-shadow:0 2px 14px rgba(24,33,45,.06); margin-bottom:14px; }
+  h1 { font-size:22px; margin:0 0 6px; } h2 { font-size:18px; margin:0 0 10px; }
+  p { line-height:1.9; margin:6px 0; } .muted { color:var(--muted); font-size:13px; }
+  .btn { display:block; width:100%; border:0; border-radius:12px; padding:15px; font:inherit; font-size:17px; font-weight:700;
+         background:var(--brand); color:#fff; cursor:pointer; margin-top:14px; }
+  .btn:disabled { opacity:.45; cursor:default; } .btn.ghost { background:#eef3f9; color:var(--brand); }
+  input[type=text], input[type=password] { width:100%; font:inherit; font-size:18px; padding:13px; border:1px solid var(--line); border-radius:12px; direction:ltr; text-align:center; }
+  label.check { display:flex; gap:10px; align-items:flex-start; line-height:1.8; margin-top:12px; }
+  label.check input { margin-top:7px; width:18px; height:18px; }
+  ol.how { padding-right:20px; line-height:2.1; margin:8px 0; }
+  .note { border-radius:12px; padding:12px 14px; margin-top:12px; line-height:1.8; }
+  .note.ok { background:var(--ok-bg); color:var(--ok); } .note.warn { background:var(--warn-bg); color:var(--warn); }
+  .note.err { background:var(--err-bg); color:var(--err); } .note.info { background:#eef3f9; color:var(--brand); }
+  .stage { position:relative; border-radius:var(--radius); overflow:hidden; background:#0d1520; aspect-ratio:3/4; }
+  .stage video, .stage img { width:100%; height:100%; object-fit:cover; display:block; }
+  .stage video { transform:scaleX(-1); }
+  .oval { position:absolute; inset:9% 17% 14%; border:3px dashed rgba(255,255,255,.75); border-radius:50%; pointer-events:none; }
+  /* Guidance pinned under the phone's front camera: reading it keeps the eyes near the lens. */
+  .look { position:fixed; top:0; left:50%; transform:translateX(-50%); z-index:20; width:min(560px, calc(100vw - 24px));
+          background:#18212d; color:#fff; border-radius:0 0 16px 16px; padding:6px 14px 12px; text-align:center; display:none; }
+  .look .arrow { font-size:20px; animation:nudge 1.2s ease-in-out infinite; } .look .cam { font-size:12px; opacity:.7; }
+  .look .msg { font-size:19px; font-weight:700; margin-top:4px; } .look.ok .msg { color:#86efac; }
+  @keyframes nudge { 50% { transform:translateY(-4px); } }
+  .fields { width:100%; border-collapse:collapse; margin-top:8px; }
+  .fields td { padding:9px 4px; border-bottom:1px solid var(--line); } .fields td:first-child { color:var(--muted); width:38%; }
+  .fields td:last-child { font-weight:700; }
+  .pair { display:flex; gap:10px; margin-top:12px; } .pair figure { flex:1; margin:0; text-align:center; font-size:12px; color:var(--muted); }
+  .pair img { width:100%; aspect-ratio:3/4; object-fit:cover; border-radius:12px; background:#0d1520; }
+  .rows div.row { display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid var(--line); gap:8px; }
+  .rows b.name { font-size:16px; } .rows .sub { font-size:12px; color:var(--muted); margin-top:2px; }
+  .rows .why { font-size:13px; color:var(--warn); margin-top:4px; }
+  .pill { font-weight:700; border-radius:99px; padding:4px 12px; font-size:14px; white-space:nowrap; }
+  .pill.pass { background:var(--ok-bg); color:var(--ok); } .pill.review { background:var(--warn-bg); color:var(--warn); }
+  .pill.fail { background:var(--err-bg); color:var(--err); } .pill.none { background:#eef1f5; color:var(--muted); }
+  .final { text-align:center; font-size:24px; font-weight:800; border-radius:var(--radius); padding:22px; margin-top:16px; }
+  .final.approved { background:var(--ok-bg); color:var(--ok); } .final.manual_review { background:var(--warn-bg); color:var(--warn); }
+  .final.rejected { background:var(--err-bg); color:var(--err); }
+  .tasks { display:flex; gap:6px; justify-content:center; margin-top:10px; } .tasks span { width:12px; height:12px; border-radius:50%; background:var(--line); }
+  .tasks span.done { background:var(--ok); } .tasks span.now { background:var(--brand-2); }
+  .hidden { display:none !important; }
+  footer { text-align:center; color:var(--muted); font-size:12px; padding:10px 0 30px; }
+</style>
+</head>
+<body>
+<header><div class="bar"><img src="/assets/logo.svg" alt="اکام"><span class="who" id="who"></span></div></header>
+<div class="look" id="look"><div class="arrow">▲</div><div class="cam">به دوربین نگاه کنید</div><div class="msg" id="lookMsg"></div></div>
+
+<main>
+  <div class="steps" id="steps"><div></div><div></div><div></div><div></div><div></div></div>
+
+  <!-- 0. access code -->
+  <section class="card" data-screen="access">
+    <h1>احراز هویت آنلاین</h1>
+    <p class="muted">نسخهٔ آزمایشی سرویس احراز هویت اکام. کد دسترسی‌ای را که به شما داده شده وارد کنید.</p>
+    <input type="password" id="code" autocomplete="off" placeholder="کد دسترسی">
+    <div class="note err hidden" id="codeErr"></div>
+    <button class="btn" id="codeBtn">ورود</button>
+  </section>
+
+  <!-- 1. intro + consent -->
+  <section class="card hidden" data-screen="intro">
+    <h1>شروع احراز هویت</h1>
+    <ol class="how">
+      <li>از <b>روی کارت ملی</b> خود عکس بگیرید.</li>
+      <li>یک <b>سلفی</b> بگیرید؛ راهنمای روی صفحه کمکتان می‌کند.</li>
+      <li>چند <b>حرکت ساده</b> مثل پلک زدن یا چرخاندن سر انجام دهید.</li>
+    </ol>
+    <p class="muted">حدود ۲ دقیقه طول می‌کشد. در جای روشن، جلوی یک دیوار ساده بایستید.</p>
+    <label class="check"><input type="checkbox" id="consent">
+      <span>موافقم که عکس کارت ملی، سلفی و نتیجهٔ بررسی من برای ارزیابی این سرویس آزمایشی <b>به‌صورت رمزنگاری‌شده</b> به‌مدت <b>۳۰ روز</b> نگهداری و سپس حذف شود. این سرویس روی سرورهای خارج از ایران اجرا می‌شود.</span></label>
+    <button class="btn" id="startBtn" disabled>شروع</button>
+  </section>
+
+  <!-- 2. ID card -->
+  <section class="card hidden" data-screen="card">
+    <h2>۱. عکس روی کارت ملی</h2>
+    <p class="muted">کارت را روی سطحی صاف بگذارید، طوری که تمام کارت در کادر باشد و نور مستقیم رویش نیفتد.</p>
+    <input type="file" id="cardFile" accept="image/*" capture="environment" class="hidden">
+    <button class="btn" id="cardBtn">📷 عکس گرفتن از کارت</button>
+    <div class="note info hidden" id="cardBusy">در حال خواندن کارت…</div>
+    <div class="hidden" id="cardOut">
+      <table class="fields" id="fields"></table>
+      <div class="note hidden" id="cardNote"></div>
+      <button class="btn" id="cardNext">ادامه</button>
+      <button class="btn ghost" id="cardRetry">عکس دوباره</button>
+    </div>
+  </section>
+
+  <!-- 3. selfie -->
+  <section class="card hidden" data-screen="selfie">
+    <h2>۲. سلفی</h2>
+    <div class="stage"><video id="video" playsinline muted></video><img id="shot" class="hidden" alt=""><div class="oval" id="oval"></div></div>
+    <div class="note info" id="selfieHint">صورتتان را داخل بیضی قرار دهید.</div>
+    <button class="btn" id="selfieBtn">روشن کردن دوربین</button>
+    <div class="hidden" id="matchOut">
+      <div class="pair"><figure><img id="cardFace" alt=""><figcaption>عکس روی کارت</figcaption></figure>
+        <figure><img id="selfieFace" alt=""><figcaption>سلفی شما</figcaption></figure></div>
+      <div class="note" id="matchNote"></div>
+      <button class="btn" id="selfieNext">ادامه</button>
+      <button class="btn ghost" id="selfieRetry">سلفی دوباره</button>
+    </div>
+  </section>
+
+  <!-- 4. liveness -->
+  <section class="card hidden" data-screen="live">
+    <h2>۳. بررسی زنده بودن</h2>
+    <p class="muted">دستورهایی که بالای صفحه می‌آید را انجام دهید.</p>
+    <div class="stage"><video id="video2" playsinline muted></video><div class="oval"></div></div>
+    <div class="tasks" id="taskDots"></div>
+    <div class="note info" id="liveHint">آماده‌اید؟</div>
+    <button class="btn" id="liveBtn">شروع</button>
+  </section>
+
+  <!-- 5. result -->
+  <section class="card hidden" data-screen="result">
+    <h2>نتیجهٔ احراز هویت</h2>
+    <div class="note info" id="resultBusy">در حال جمع‌بندی…</div>
+    <div class="rows" id="rows"></div>
+    <div class="final hidden" id="final"></div>
+    <p class="muted" id="caseRef"></p>
+    <button class="btn ghost" id="again">احراز هویت جدید</button>
+  </section>
+</main>
+<footer>اکام · نسخهٔ آزمایشی</footer>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const esc = (x) => String(x ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const SCREENS = ["access", "intro", "card", "selfie", "live", "result"];
+  let code = "", caseId = null, captureId = null, selfieB64 = null, cardFaceB64 = null, stream = null, running = false;
+
+  // ---------------------------------------------------------------- plumbing
+  function show(name) {
+    document.querySelectorAll("[data-screen]").forEach((s) => s.classList.toggle("hidden", s.dataset.screen !== name));
+    const i = SCREENS.indexOf(name) - 1;  // the bar covers the 5 steps after the code
+    [...$("steps").children].forEach((d, k) => { d.className = k < i ? "done" : k === i ? "on" : ""; });
+    window.scrollTo(0, 0);
+  }
+  async function api(path, opts = {}) {
+    opts.headers = { ...(opts.headers || {}), "X-Access-Code": code };
+    const r = await fetch(path, opts);
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw Object.assign(new Error(body.message_fa || body.message || r.statusText), { status: r.status, body });
+    return body;
+  }
+  const post = (path, json) => api(path, { method: "POST", headers: json ? { "Content-Type": "application/json" } : {}, body: json ? JSON.stringify(json) : undefined });
+  function note(el, tone, html) { el.className = "note " + tone; el.innerHTML = html; el.classList.remove("hidden"); }
+  function jpeg(video, maxW, q) {
+    const s = Math.min(1, maxW / video.videoWidth), c = document.createElement("canvas");
+    c.width = Math.round(video.videoWidth * s); c.height = Math.round(video.videoHeight * s);
+    c.getContext("2d").drawImage(video, 0, 0, c.width, c.height);
+    return new Promise((res) => c.toBlob(res, "image/jpeg", q));
+  }
+  async function camera(video, width) {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: width } }, audio: false });
+    video.srcObject = stream; await video.play();
+  }
+  function stopCamera() { running = false; if (stream) stream.getTracks().forEach((t) => t.stop()); stream = null; $("look").style.display = "none"; }
+  function look(text, ok) { $("look").style.display = "block"; $("look").className = "look" + (ok ? " ok" : ""); $("lookMsg").textContent = text; }
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // ---------------------------------------------------------------- 0. access
+  try { code = localStorage.getItem("kyc_code") || ""; } catch (e) { code = ""; }
+  async function enter() {
+    code = $("code").value.trim() || code;
+    try {
+      const me = await api("/v1/access/whoami");
+      try { localStorage.setItem("kyc_code", code); } catch (e) {}
+      $("who").textContent = me.customer !== "local" ? me.customer : "";
+      show("intro");
+    } catch (e) { note($("codeErr"), "err", "کد دسترسی درست نیست."); }
+  }
+  $("codeBtn").onclick = enter;
+  $("code").onkeydown = (e) => { if (e.key === "Enter") enter(); };
+  if (code) enter();
+
+  // ---------------------------------------------------------------- 1. intro
+  $("consent").onchange = (e) => { $("startBtn").disabled = !e.target.checked; };
+  $("startBtn").onclick = async () => {
+    caseId = (await post("/v1/cases")).case_id;
+    show("card");
+  };
+
+  // ---------------------------------------------------------------- 2. card
+  $("cardBtn").onclick = () => $("cardFile").click();
+  $("cardRetry").onclick = () => $("cardFile").click();
+  $("cardFile").onchange = async (e) => {
+    const file = e.target.files[0]; e.target.value = "";
+    if (!file) return;
+    $("cardOut").classList.add("hidden"); $("cardBusy").classList.remove("hidden"); $("cardBtn").classList.add("hidden");
+    try {
+      const fd = new FormData(); fd.append("file", file, file.name);
+      const ocr = await api(`/v1/cases/${caseId}/document`, { method: "POST", body: fd });
+      cardFaceB64 = ocr.data.portrait_base64;
+      const f = ocr.data.fields || {};
+      $("fields").innerHTML = "<tbody>" + Object.values(f).map((x) =>
+        `<tr><td>${esc(x.label_fa)}</td><td>${x.value ? esc(x.value) : "<span style='color:var(--err)'>خوانده نشد</span>"}</td></tr>`).join("") + "</tbody>";
+      const der = ocr.data.derived || {};
+      const problems = (ocr.reasons || []).filter((r) => r.severity === "error").map((r) => esc(r.message_fa));
+      if (!cardFaceB64) note($("cardNote"), "err", "عکس روی کارت پیدا نشد؛ لطفاً دوباره و واضح‌تر عکس بگیرید.");
+      else if (problems.length) note($("cardNote"), "warn", problems.join("<br>") + "<br>اگر اطلاعات درست خوانده نشده، دوباره عکس بگیرید.");
+      else note($("cardNote"), "ok", "کارت خوانده شد" + (der.national_id_valid ? " · کد ملی معتبر است ✓" : ""));
+      $("cardNext").disabled = !cardFaceB64;
+      $("cardOut").classList.remove("hidden");
+    } catch (err) {
+      $("cardBtn").classList.remove("hidden");
+      note($("cardNote"), "err", esc(err.message)); $("cardOut").classList.remove("hidden"); $("cardNext").disabled = true;
+    } finally { $("cardBusy").classList.add("hidden"); }
+  };
+  $("cardNext").onclick = () => show("selfie");
+
+  // ---------------------------------------------------------------- 3. selfie
+  async function takeStill(video) {
+    const track = stream.getVideoTracks()[0];
+    if ("ImageCapture" in window) { try { return await new ImageCapture(track).takePhoto(); } catch (e) {} }
+    return jpeg(video, 4096, 0.95);
+  }
+  async function selfie() {
+    $("matchOut").classList.add("hidden"); $("shot").classList.add("hidden"); $("video").classList.remove("hidden"); $("oval").classList.remove("hidden");
+    $("selfieBtn").classList.add("hidden");
+    let sid;
+    try {
+      sid = (await post(`/v1/cases/${caseId}/capture`)).capture_session_id;
+      await camera($("video"), 1920);
+    } catch (e) { note($("selfieHint"), "err", "دوربین روشن نشد: " + esc(e.message)); $("selfieBtn").classList.remove("hidden"); return; }
+    running = true; look("صورتتان را داخل بیضی قرار دهید");
+    while (running) {
+      const t0 = performance.now();
+      try {
+        const fd = new FormData(); fd.append("file", await jpeg($("video"), 960, 0.85), "f.jpg");
+        let fb = await api(`/v1/face-capture/sessions/${sid}/frames`, { method: "POST", body: fd });
+        if (fb.state === "READY_FOR_STILL") {
+          look("عالی — ثابت بمانید…", true);
+          const sd = new FormData(); sd.append("file", await takeStill($("video")), "s.jpg");
+          fb = await api(`/v1/face-capture/sessions/${sid}/still`, { method: "POST", body: sd });
+        }
+        if (fb.state === "CAPTURED") break;
+        const msg = fb.primary_hint ? fb.primary_hint.message_fa : "خوب است، همین‌طور بمانید…";
+        look(msg); note($("selfieHint"), "info", esc(msg));
+      } catch (e) { if (e.status === 409 || e.status === 404) break; }
+      const wait = 350 - (performance.now() - t0); if (wait > 0) await sleep(wait);
+    }
+    stopCamera();
+    try {
+      const res = await api(`/v1/face-capture/sessions/${sid}/result?include_selfie=true`);
+      captureId = res.data.capture_id; selfieB64 = res.data.selfie_base64;
+    } catch (e) { captureId = null; }
+    if (!captureId) { note($("selfieHint"), "err", "سلفی گرفته نشد؛ دوباره تلاش کنید."); $("selfieBtn").textContent = "تلاش دوباره"; $("selfieBtn").classList.remove("hidden"); return; }
+    $("video").classList.add("hidden"); $("oval").classList.add("hidden");
+    $("shot").src = "data:image/jpeg;base64," + selfieB64; $("shot").classList.remove("hidden");
+    note($("selfieHint"), "ok", "سلفی گرفته شد ✓ در حال مقایسه با عکس کارت…");
+    $("cardFace").src = "data:image/jpeg;base64," + cardFaceB64; $("selfieFace").src = "data:image/jpeg;base64," + selfieB64;
+    try {
+      const m = await post(`/v1/cases/${caseId}/face-match`);
+      const sim = m.data.similarity != null ? (m.data.similarity * 100).toFixed(0) + "٪" : "—";
+      const tone = { pass: "ok", review: "warn", fail: "err" }[m.decision];
+      const txt = { pass: "چهرهٔ شما با عکس کارت مطابقت دارد", review: "تطابق چهره قطعی نیست؛ بررسی دستی می‌شود", fail: "چهرهٔ شما با عکس کارت مطابقت ندارد" }[m.decision];
+      note($("matchNote"), tone, `<b>${txt}</b> · شباهت ${sim}`);
+    } catch (e) { note($("matchNote"), "err", esc(e.message)); }
+    $("matchOut").classList.remove("hidden");
+  }
+  $("selfieBtn").onclick = selfie;
+  $("selfieRetry").onclick = selfie;
+  $("selfieNext").onclick = () => show("live");
+
+  // ---------------------------------------------------------------- 4. liveness
+  $("liveBtn").onclick = async () => {
+    $("liveBtn").classList.add("hidden");
+    let s;
+    try {
+      s = await post(`/v1/cases/${caseId}/liveness`);
+      await camera($("video2"), 1280);
+    } catch (e) { note($("liveHint"), "err", esc(e.message)); $("liveBtn").classList.remove("hidden"); return; }
+    $("taskDots").innerHTML = s.tasks.map(() => "<span></span>").join("");
+    running = true; look(s.first_instruction_fa);
+    let fb = { state: "BASELINE" };
+    while (running && (fb.state === "BASELINE" || fb.state === "RUNNING")) {
+      const t0 = performance.now();
+      try {
+        const fd = new FormData(); fd.append("file", await jpeg($("video2"), 960, 0.85), "f.jpg");
+        fb = await api(`/v1/liveness/sessions/${s.liveness_session_id}/frames`, { method: "POST", body: fd });
+      } catch (e) { break; }
+      const text = fb.hint ? fb.hint.message_fa : (fb.instruction_fa || "");
+      look(text); note($("liveHint"), "info", `<b>${esc(text)}</b>${fb.time_remaining_s != null ? ` · ${Math.ceil(fb.time_remaining_s)} ثانیه` : ""}`);
+      [...$("taskDots").children].forEach((d, k) => { d.className = k < fb.task_index ? "done" : (k === fb.task_index && fb.state === "RUNNING") ? "now" : ""; });
+      const wait = 150 - (performance.now() - t0); if (wait > 0) await sleep(wait);
+    }
+    stopCamera();
+    show("result"); finalize();
+  };
+
+  // ---------------------------------------------------------------- 5. result
+  const STEP = { document: "کارت ملی", selfie: "سلفی", antispoof: "تشخیص جعل", face_match: "تطبیق چهره با کارت", liveness: "زنده بودن" };
+  const PILL = { pass: ["pass", "قبول"], review: ["review", "بررسی دستی"], fail: ["fail", "رد"] };
+  const FINAL = { approved: "✅ احراز هویت تأیید شد", manual_review: "⚠️ پرونده برای بررسی دستی ارسال شد", rejected: "❌ احراز هویت رد شد" };
+  function detail(step, d) {
+    if (!d) return "";
+    if (step === "document") return d.values ? `کد ملی ${esc(d.values.national_id || "—")}` : "";
+    if (step === "antispoof") return d.retake ? "عکس تار بود" : "";
+    if (step === "face_match") return d.similarity != null ? `شباهت ${(d.similarity * 100).toFixed(0)}٪` : "";
+    if (step === "liveness") return d.tasks ? `${d.tasks.filter((t) => t.done).length} از ${d.tasks.length} حرکت` : "";
+    return "";
+  }
+  async function finalize() {
+    $("rows").innerHTML = ""; $("final").classList.add("hidden"); $("resultBusy").classList.remove("hidden");
+    try {
+      const r = await post(`/v1/cases/${caseId}/finalize`);
+      $("rows").innerHTML = Object.keys(STEP).map((step) => {
+        const st = r.steps[step] || { status: "not_run" };
+        const [cls, label] = st.status === "done" ? PILL[st.decision] : ["none", "انجام نشد"];
+        const why = r.blocking_reasons.filter((b) => b.step === step).map((b) => `<div class="why">• ${esc(b.message_fa)}</div>`).join("");
+        const mr = r.module_results[step];
+        return `<div class="row"><div><b class="name">${STEP[step]}</b><div class="sub">${detail(step, mr && mr.data)}</div>${why}</div>
+          <span class="pill ${cls}">${label}</span></div>`;
+      }).join("");
+      $("final").className = "final " + r.verdict; $("final").textContent = FINAL[r.verdict];
+      $("caseRef").textContent = "شمارهٔ پرونده: " + r.case_id;
+    } catch (e) {
+      $("rows").innerHTML = `<div class="note err">${esc(e.message)}</div>`;
+    } finally { $("resultBusy").classList.add("hidden"); $("final").classList.remove("hidden"); }
+  }
+  $("again").onclick = () => { caseId = captureId = selfieB64 = cardFaceB64 = null; $("consent").checked = false; $("startBtn").disabled = true;
+    $("cardOut").classList.add("hidden"); $("cardBtn").classList.remove("hidden"); $("selfieBtn").textContent = "روشن کردن دوربین";
+    $("selfieBtn").classList.remove("hidden"); $("matchOut").classList.add("hidden"); $("liveBtn").classList.remove("hidden"); show("intro"); };
+
+  show(code ? "access" : "access");
+})();
+</script>
+</body>
+</html>
