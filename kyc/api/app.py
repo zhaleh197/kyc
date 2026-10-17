@@ -15,6 +15,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from kyc.api import access
 from kyc.core.config import get_settings
 from kyc.core.errors import KycError
 from kyc.modules.antispoof.router import router as antispoof_router
@@ -50,6 +51,8 @@ def create_app() -> FastAPI:
             allow_methods=["GET", "POST"],
             allow_headers=["*"],
         )
+
+    access.install(app, settings)
 
     @app.exception_handler(KycError)
     async def handle_kyc_error(_: Request, exc: KycError) -> JSONResponse:

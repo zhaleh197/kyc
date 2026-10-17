@@ -17,6 +17,7 @@ stores; a shared store is the same seam later.
 from __future__ import annotations
 
 import base64
+import logging
 import secrets
 import threading
 import time
@@ -29,7 +30,10 @@ from kyc.core.errors import CaptureNotFound, InvalidInput, KycError
 from kyc.core.imaging import decode_image
 from kyc.core.schemas import ModuleResult
 
+from .archive import CaseArchive, RetentionClock
 from .policy import STEPS, UNAVAILABLE, decide
+
+logger = logging.getLogger("kyc.cases")
 
 
 class CaseNotFound(KycError):
@@ -48,9 +52,11 @@ class CaseConflict(KycError):
 class Case:
     case_id: str
     expires_at: float
+    customer: str = "local"  # cases are only visible to the customer that opened them
     created_at: float = field(default_factory=time.time)
     document: ModuleResult | None = None
     portrait_b64: str | None = None  # kept server-side for face match; never returned
+    card_bytes: bytes | None = None  # the uploaded card photo, for the archive
     document_attempts: int = 0
     capture_session_id: str | None = None
     capture_attempts: int = 0
@@ -72,18 +78,21 @@ def _public(result: ModuleResult) -> ModuleResult:
 
 
 class CaseService:
-    def __init__(self, settings: Settings | None = None, *, ocr, capture, antispoof, face_match, liveness):
+    def __init__(self, settings: Settings | None = None, *, ocr, capture, antispoof, face_match, liveness,
+                 archive: CaseArchive | None = None):
         self.settings = settings or get_settings()
         self.ocr, self.capture, self.antispoof = ocr, capture, antispoof
         self.face_match, self.liveness = face_match, liveness
         self._cases: dict[str, Case] = {}
         self._lock = threading.Lock()
+        self.archive = archive
+        self._retention = RetentionClock(archive) if archive is not None else None
 
     # ------------------------------------------------------------------ cases
 
-    def create(self) -> Case:
+    def create(self, customer: str = "local") -> Case:
         cfg = self.settings.orchestrator
-        case = Case(case_id=secrets.token_urlsafe(16), expires_at=time.time() + cfg.case_ttl_s)
+        case = Case(case_id=secrets.token_urlsafe(16), expires_at=time.time() + cfg.case_ttl_s, customer=customer)
         with self._lock:
             now = time.time()
             for cid in [c for c, v in self._cases.items() if now - v.expires_at > cfg.case_ttl_s]:
@@ -91,10 +100,12 @@ class CaseService:
             self._cases[case.case_id] = case
         return case
 
-    def get(self, case_id: str) -> Case:
+    def get(self, case_id: str, customer: str | None = None) -> Case:
+        """`customer` set: another customer's case reads as not found - not
+        "forbidden", which would confirm the case exists."""
         with self._lock:
             case = self._cases.get(case_id)
-        if case is None:
+        if case is None or (customer is not None and case.customer != customer):
             raise CaseNotFound("Unknown or expired case")
         return case
 
@@ -112,9 +123,11 @@ class CaseService:
 
     # ------------------------------------------------------------------ steps
 
-    def submit_document(self, case_id: str, data: bytes, profile: str | None = None) -> ModuleResult:
+    def submit_document(
+        self, case_id: str, data: bytes, profile: str | None = None, *, customer: str | None = None
+    ) -> ModuleResult:
         cfg = self.settings.orchestrator
-        case = self.get(case_id)
+        case = self.get(case_id, customer)
         with case.lock:
             self._open(case)
             self._attempt(case.document_attempts, cfg.max_document_attempts, "document")
@@ -122,15 +135,16 @@ class CaseService:
             result = self.ocr.run_bytes(data, profile, return_portrait=True)
             case.document = _public(result)
             case.portrait_b64 = result.data.get("portrait_base64")
+            case.card_bytes = data
             case.face_match, case.face_match_for = None, None  # a new card needs a new match
             # The caller gets the portrait cropped from the card they just sent
             # (to show it); face match always uses the server's own copy.
             return result
 
-    def match_now(self, case_id: str) -> ModuleResult:
+    def match_now(self, case_id: str, *, customer: str | None = None) -> ModuleResult:
         """Face match between this case's card portrait and its selfie, now -
         reused by finalize as long as neither changes."""
-        case = self.get(case_id)
+        case = self.get(case_id, customer)
         with case.lock:
             self._open(case)
             capture_id = self._capture_id(case)
@@ -142,11 +156,11 @@ class CaseService:
             case.face_match, case.face_match_for = result, (capture_id, case.portrait_b64[:64])
             return result
 
-    def start_capture(self, case_id: str, check_modes: dict | None = None) -> str:
+    def start_capture(self, case_id: str, check_modes: dict | None = None, *, customer: str | None = None) -> str:
         """`check_modes` is passed to face capture, which honours it only in
         debug mode (dev page); in production it refuses with 403."""
         cfg = self.settings.orchestrator
-        case = self.get(case_id)
+        case = self.get(case_id, customer)
         with case.lock:
             self._open(case)
             self._attempt(case.capture_attempts, cfg.max_capture_attempts, "selfie")
@@ -156,9 +170,9 @@ class CaseService:
             case.liveness_session_id = None  # a new selfie needs its own liveness
             return case.capture_session_id
 
-    def start_liveness(self, case_id: str):
+    def start_liveness(self, case_id: str, *, customer: str | None = None):
         cfg = self.settings.orchestrator
-        case = self.get(case_id)
+        case = self.get(case_id, customer)
         with case.lock:
             self._open(case)
             capture_id = self._capture_id(case)
@@ -186,9 +200,9 @@ class CaseService:
 
     # ------------------------------------------------------------------ finalize
 
-    def finalize(self, case_id: str) -> dict:
+    def finalize(self, case_id: str, *, customer: str | None = None) -> dict:
         cfg = self.settings.orchestrator
-        case = self.get(case_id)
+        case = self.get(case_id, customer)
         with case.lock:
             if case.verdict is not None:
                 return case.verdict  # idempotent
@@ -234,8 +248,30 @@ class CaseService:
                              "liveness": case.liveness_attempts},
                 "decided_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             }
+            case.verdict["archived"] = self._archive(case, capture_id)
             case.portrait_b64 = None  # not needed after the verdict
+            case.card_bytes = None
             return case.verdict
+
+    def _archive(self, case: Case, capture_id: str) -> bool:
+        """Card photo, selfie and verdict, encrypted, for retention_days."""
+        if self.archive is None:
+            return False
+        self._retention.tick()
+        files = {}
+        if case.card_bytes:
+            files["card.jpg"] = case.card_bytes
+        capture = self.capture.get_capture(capture_id) if hasattr(self.capture, "get_capture") else None
+        if capture is not None:
+            files["selfie.jpg"] = capture.jpeg
+        record = {**case.verdict, "customer": case.customer,
+                  "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(case.created_at))}
+        try:
+            self.archive.save(case.case_id, time.strftime("%Y-%m-%d", time.gmtime()), record, files)
+            return True
+        except Exception:  # noqa: BLE001 - the verdict stands even if storage fails
+            logger.exception("archiving case %s failed", case.case_id)
+            return False
 
     @staticmethod
     def _run(call, not_finished=UNAVAILABLE):
@@ -248,8 +284,8 @@ class CaseService:
         except KycError as exc:
             return UNAVAILABLE if exc.http_status >= 500 else not_finished
 
-    def view(self, case_id: str) -> dict:
-        case = self.get(case_id)
+    def view(self, case_id: str, *, customer: str | None = None) -> dict:
+        case = self.get(case_id, customer)
         with case.lock:
             if case.verdict is not None:
                 return case.verdict

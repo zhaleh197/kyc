@@ -405,6 +405,24 @@ class Settings(BaseSettings):
     cors_origins: list[str] = Field(default_factory=list, description="Empty = same-origin only")
     max_upload_bytes: int = 12 * 1024 * 1024
 
+    # --- hosted test service ---------------------------------------------
+    # Per-customer access codes: {"customer name": "code"}. Set as a secret,
+    # never committed. With require_access every /v1 call needs one
+    # (kyc/api/access.py) and cases are visible only to their customer.
+    require_access: bool = False
+    access_codes: dict[str, str] = Field(default_factory=dict)
+
+    # Case archive: card photo, selfie and verdict of every finalized case,
+    # encrypted, kept retention_days and then deleted (kyc/modules/
+    # orchestrator/archive.py). "local" = archive_dir on this machine; "hf" =
+    # a private Hugging Face dataset repo (the free Space disk is wiped on
+    # every restart). archive_key: a Fernet key, set as a secret.
+    archive_backend: Literal["off", "local", "hf"] = "off"
+    archive_dir: Path = REPO_ROOT / ".data" / "archive"
+    archive_hf_repo: str = ""
+    archive_key: str = ""
+    retention_days: int = 30
+
     ocr: OcrSettings = Field(default_factory=OcrSettings)
     face_quality: FaceQualitySettings = Field(default_factory=FaceQualitySettings)
     face_match: FaceMatchSettings = Field(default_factory=FaceMatchSettings)
