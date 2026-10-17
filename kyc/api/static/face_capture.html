@@ -115,6 +115,11 @@
       <figure><img id="selfieThumb" alt=""><figcaption>سلفی گرفته‌شده</figcaption></figure>
     </div>
     <div class="verdict" id="verdict" style="display:none"></div>
+    <div id="ocrBox" style="display:none; margin-top:12px">
+      <h2>اطلاعات کارت ملی (OCR)</h2>
+      <table id="ocrFields" style="direction:rtl"></table>
+      <div class="muted" id="ocrNotes" style="margin-top:6px"></div>
+    </div>
   </section>
 
   <section>
@@ -283,7 +288,7 @@
   async function start() {
     $("result").textContent = "—"; selfieImg.style.display = "none"; video.style.display = "block";
     captureId = null; selfieB64 = null; $("card").disabled = true; $("card").value = "";
-    $("pair").style.display = "none"; $("verdict").style.display = "none"; $("spoofVerdict").style.display = "none";
+    $("pair").style.display = "none"; $("verdict").style.display = "none"; $("spoofVerdict").style.display = "none"; $("ocrBox").style.display = "none";
     $("liveBox").style.display = "none"; $("liveVerdict").style.display = "none"; $("liveProgress").textContent = ""; $("spoofSave").style.display = "none";
     try {
       stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
@@ -359,12 +364,35 @@
     }
   }
 
+  // The card's field VALUES (not crops): raw recognition next to the
+  // normalised value, so a misread and a checksum failure can be told apart.
+  function showOcr(ocr) {
+    const d = ocr.data, esc = (x) => String(x ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+    const rows = Object.values(d.fields || {}).map((f) => {
+      const conf = f.confidence ? (f.confidence * 100).toFixed(0) + "%" : "—";
+      const flag = !f.value ? "❌ خوانده نشد" : f.low_confidence ? "⚠️ اطمینان پایین" : "✓";
+      return `<tr><td><b>${esc(f.label_fa)}</b></td><td style="font-size:15px">${esc(f.value) || "—"}</td>
+        <td class="muted" style="direction:ltr">${esc(f.raw)}</td><td>${conf}</td><td>${flag}</td></tr>`;
+    });
+    $("ocrFields").innerHTML = "<tbody><tr class=\"muted\"><td>فیلد</td><td>مقدار</td><td>خام (مدل)</td><td>اطمینان</td><td></td></tr>" + rows.join("") + "</tbody>";
+    const der = d.derived || {}, notes = [];
+    if (der.national_id_valid !== undefined) notes.push(der.national_id_valid ? "✓ رقم کنترل کد ملی درست است" : "❌ رقم کنترل کد ملی نادرست است");
+    if (der.birth_date_gregorian) notes.push(`تاریخ تولد میلادی: ${der.birth_date_gregorian} · سن: ${der.age}`);
+    if (der.expiry_date_gregorian) notes.push(`انقضا: ${der.expiry_date_gregorian}${der.expired ? " — ❌ منقضی شده" : ""}`);
+    if (d.orientation && (d.orientation.rotation || d.orientation.deskew_deg)) notes.push(`کارت چرخانده شد: ${d.orientation.rotation}° و ${d.orientation.deskew_deg}°`);
+    const issues = (ocr.reasons || []).filter((r) => r.severity !== "info").map((r) => r.message_fa);
+    $("ocrNotes").innerHTML = notes.map(esc).join("<br>") + (issues.length ? "<br>" + issues.map((x) => "• " + esc(x)).join("<br>") : "")
+      + `<br>نتیجهٔ OCR: <b>${esc(ocr.decision)}</b>`;
+    $("ocrBox").style.display = "block";
+  }
+
   async function matchCard(file) {
     const v = $("verdict");
     v.className = "verdict"; v.style.display = "block"; v.textContent = "در حال خواندن کارت…";
     try {
       const fd = new FormData(); fd.append("file", file, file.name); fd.append("return_portrait", "true");
       const ocr = await api("/v1/ocr/document", { method: "POST", body: fd });
+      showOcr(ocr);
       const portrait = ocr.data.portrait_base64;
       if (!portrait) {
         const why = ocr.reasons.filter((r) => r.severity === "error").map((r) => r.message_fa).join("، ");
