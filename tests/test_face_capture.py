@@ -552,7 +552,7 @@ def test_dev_page_exists_only_in_debug(monkeypatch):
 
     inputs = re.findall(r'<input[^>]*type="file"[^>]*>', page.text)
     assert len(inputs) == 1 and 'id="card"' in inputs[0]
-    # face match now runs inside the case, at /v1/cases/{id}/finalize
+    assert "/face-match" in page.text  # through the case: /v1/cases/{id}/face-match
     assert "/v1/antispoof/verify" in page.text
     assert "/v1/liveness/sessions" in page.text
     assert "/v1/cases" in page.text

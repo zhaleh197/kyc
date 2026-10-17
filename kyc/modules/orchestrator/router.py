@@ -6,6 +6,7 @@
                                               the still to /v1/face-capture/sessions/...
     POST /v1/cases/{id}/liveness           -> liveness session id + tasks; stream
                                               frames to /v1/liveness/sessions/...
+    POST /v1/cases/{id}/face-match         -> card portrait vs selfie now (reused by finalize)
     POST /v1/cases/{id}/finalize           -> verdict
     GET  /v1/cases/{id}                    -> state, or the verdict once finalized
 """
@@ -82,6 +83,11 @@ def liveness(case_id: str, service: CaseService = Depends(get_service)) -> dict:
                   for t in session.tasks],
         "first_instruction_fa": INSTRUCTIONS_FA["BASELINE"],
     }
+
+
+@router.post("/{case_id}/face-match", response_model=ModuleResult, summary="Card portrait vs selfie, now")
+def face_match(case_id: str, service: CaseService = Depends(get_service)) -> ModuleResult:
+    return service.match_now(case_id)
 
 
 @router.post("/{case_id}/finalize", summary="Combine every step into the verdict")

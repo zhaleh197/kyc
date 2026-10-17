@@ -404,9 +404,21 @@
       const fd = new FormData(); fd.append("file", file, file.name);
       const ocr = await api(`/v1/cases/${caseId}/document`, { method: "POST", body: fd });
       showOcr(ocr);
-      // The card portrait stays on the server; face match runs at finalize.
-      v.className = "verdict " + (ocr.decision === "fail" ? "fail" : "pass");
-      v.textContent = "کارت در پرونده ثبت شد — مقایسهٔ چهره با سلفی در «نتیجهٔ نهایی پرونده» انجام می‌شود";
+      const portrait = ocr.data.portrait_base64;
+      if (!portrait) {
+        const why = ocr.reasons.filter((r) => r.severity === "error").map((r) => r.message_fa).join("، ");
+        v.className = "verdict fail"; v.textContent = "عکس روی کارت پیدا نشد" + (why ? ": " + why : ""); return;
+      }
+      $("cardPortrait").src = "data:image/jpeg;base64," + portrait;
+      $("selfieThumb").src = "data:image/jpeg;base64," + selfieB64;
+      $("pair").style.display = "flex";
+      v.textContent = "در حال مقایسهٔ چهره…";
+      // Runs on the server's own copy of the portrait; the final verdict reuses it.
+      const m = await api(`/v1/cases/${caseId}/face-match`, { method: "POST" });
+      const sim = m.data.similarity, t = m.data.thresholds;
+      v.className = "verdict " + m.decision;
+      v.innerHTML = `<b>${VERDICT_FA[m.decision]}</b> — شباهت <b>${sim === null ? "—" : sim.toFixed(3)}</b>
+        <div class="muted">قبول ≥ ${t.accept_above} · رد &lt; ${t.reject_below}${m.reasons.length ? " · " + m.reasons.map((r) => r.message_fa).join("، ") : ""}</div>`;
     } catch (e) {
       v.className = "verdict fail";
       v.textContent = e.status === 404 ? "سلفی منقضی شده؛ دوباره سلفی بگیرید." : "خطا: " + e.message;
@@ -494,18 +506,40 @@
   // ---------------------------------------------------------------- finalize
   const CASE_FA = { approved: "✅ تأیید شد", manual_review: "⚠️ بررسی دستی", rejected: "❌ رد شد" };
   const STEP_FA = { document: "کارت ملی", selfie: "سلفی", antispoof: "تشخیص جعل", face_match: "تطبیق چهره", liveness: "زنده بودن" };
+  const DECISION_FA = { pass: "✅ قبول", review: "⚠️ بررسی دستی", fail: "❌ رد" };
+  function stepDetail(step, mr, d) {
+    if (!mr) return "";
+    const x = mr.data || {};
+    if (step === "document") {
+      const v = x.values || {}, der = x.derived || {};
+      return `کد ملی ${v.national_id || "—"}${der.national_id_valid === false ? " (رقم کنترل نادرست)" : ""} · ${v.first_name || ""} ${v.last_name || ""} · تولد ${v.birth_date || "—"}`;
+    }
+    if (step === "selfie") return x.metrics ? `وضوح ${(+x.metrics.sharpness).toFixed(1)}` : "";
+    if (step === "antispoof") return x.retake ? "عکس تار است؛ بررسی نشد" : `امتیاز زنده بودن ${x.live_score != null ? (+x.live_score).toFixed(3) : "—"}`;
+    if (step === "face_match") return `شباهت چهره با کارت ${x.similarity != null ? (+x.similarity).toFixed(3) : "—"}`;
+    if (step === "liveness") return x.tasks ? `کارها: ${x.tasks.filter((t) => t.done).length} از ${x.tasks.length}` : "";
+    return "";
+  }
   async function finalizeCase() {
     const v = $("caseVerdict"); v.style.display = "block"; v.className = "verdict"; v.textContent = "در حال جمع‌بندی…";
     try {
       const r = await api(`/v1/cases/${caseId}/finalize`, { method: "POST" });
       const esc = (x) => String(x ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
-      const fm = r.module_results.face_match, as = r.module_results.antispoof;
-      const steps = Object.entries(r.steps).map(([k, st]) =>
-        `${STEP_FA[k] || k}: ${st.status === "done" ? st.decision : st.status}`).join(" · ");
-      v.className = "verdict " + ({ approved: "pass", manual_review: "review", rejected: "fail" }[r.verdict]);
-      v.innerHTML = `<b>${CASE_FA[r.verdict]}</b>
-        ${r.blocking_reasons.length ? "<br>" + r.blocking_reasons.map((b) => `• ${esc(STEP_FA[b.step] || b.step)}: ${esc(b.message_fa)} (${b.outcome === "rejected" ? "رد" : "بررسی دستی"})`).join("<br>") : ""}
-        <div class="muted">${esc(steps)}<br>شباهت چهره به کارت: ${fm ? fm.data.similarity : "—"} · زنده بودن سلفی: ${as && as.data.live_score != null ? as.data.live_score : "—"} · سیاست: ${esc(r.policy_version)}</div>`;
+      const rows = ["document", "selfie", "antispoof", "face_match", "liveness"].map((step) => {
+        const st = r.steps[step] || { status: "not_run" };
+        const mr = r.module_results[step];
+        const head = st.status === "done" ? DECISION_FA[st.decision] : st.status === "unavailable" ? "⛔ در دسترس نبود" : "— انجام نشد";
+        const why = r.blocking_reasons.filter((b) => b.step === step)
+          .map((b) => `<div style="margin-right:18px">• ${esc(b.message_fa)} → <b>${b.outcome === "rejected" ? "رد" : "بررسی دستی"}</b></div>`).join("");
+        return `<div style="padding:8px 0;border-bottom:1px solid var(--line)">
+          <b style="font-size:16px">${esc(STEP_FA[step])}:</b> <b>${head}</b>
+          <div class="muted">${esc(stepDetail(step, mr, r))}</div>${why}</div>`;
+      }).join("");
+      const tone = { approved: "pass", manual_review: "review", rejected: "fail" }[r.verdict];
+      v.className = "verdict";
+      v.innerHTML = rows + `<div class="verdict ${tone}" style="margin-top:12px;font-size:22px;text-align:center">
+          <b>تصمیم نهایی: ${CASE_FA[r.verdict]}</b>
+          <div class="muted" style="font-size:12px">سیاست ${esc(r.policy_version)} · پرونده ${esc(r.case_id)}</div></div>`;
       $("result").textContent = JSON.stringify(r, null, 2);
     } catch (e) {
       v.className = "verdict fail";

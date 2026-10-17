@@ -212,12 +212,39 @@ def test_api_case_flow():
         cid = client.post("/v1/cases").json()["case_id"]
         assert client.post(f"/v1/cases/{cid}/finalize").status_code == 409  # nothing done yet
         doc = client.post(f"/v1/cases/{cid}/document", files={"file": ("c.jpg", b"jpeg", "image/jpeg")}).json()
-        assert "portrait_base64" not in doc["data"]  # the portrait stays server-side
+        assert doc["data"]["portrait_base64"]  # shown back to the caller who sent the card
         assert client.post(f"/v1/cases/{cid}/capture").json()["capture_session_id"] == "cap-session"
         assert client.post(f"/v1/cases/{cid}/liveness").json()["liveness_session_id"] == "live-1"
+        assert client.post(f"/v1/cases/{cid}/face-match").json()["module"] == "face_match"
         verdict = client.post(f"/v1/cases/{cid}/finalize").json()
         assert verdict["verdict"] == "approved" and verdict["policy_version"]
         assert client.get(f"/v1/cases/{cid}").json()["verdict"] == "approved"
         assert client.get("/v1/cases/nope").status_code == 404
     finally:
         app.dependency_overrides.clear()
+
+
+
+def test_face_match_now_is_reused_at_finalize_and_redone_for_a_new_card():
+    fakes = Fakes()
+    svc = service(fakes)
+    cid = full_case(svc)
+    svc.match_now(cid)
+    svc.finalize(cid)
+    assert fakes.calls.count("face_match:cap-1") == 1  # reused, not run twice
+
+    fakes2 = Fakes()
+    svc2 = service(fakes2)
+    cid2 = full_case(svc2)
+    svc2.match_now(cid2)
+    svc2.submit_document(cid2, b"another card")  # a new card invalidates the match
+    svc2.finalize(cid2)
+    assert fakes2.calls.count("face_match:cap-1") == 2
+
+
+def test_face_match_now_needs_card_and_selfie():
+    svc = service(Fakes())
+    case = svc.create()
+    with pytest.raises(CaseConflict) as exc:
+        svc.match_now(case.case_id)
+    assert exc.value.code == "card_missing"

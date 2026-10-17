@@ -56,6 +56,11 @@ class Case:
     capture_attempts: int = 0
     liveness_session_id: str | None = None
     liveness_attempts: int = 0
+    # Face match run before finalize (to show it next to the card), and the
+    # capture it was run for - reused at finalize only for the same selfie
+    # and the same card.
+    face_match: ModuleResult | None = None
+    face_match_for: tuple[str, str] | None = None
     verdict: dict | None = None
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
@@ -117,7 +122,25 @@ class CaseService:
             result = self.ocr.run_bytes(data, profile, return_portrait=True)
             case.document = _public(result)
             case.portrait_b64 = result.data.get("portrait_base64")
-            return case.document
+            case.face_match, case.face_match_for = None, None  # a new card needs a new match
+            # The caller gets the portrait cropped from the card they just sent
+            # (to show it); face match always uses the server's own copy.
+            return result
+
+    def match_now(self, case_id: str) -> ModuleResult:
+        """Face match between this case's card portrait and its selfie, now -
+        reused by finalize as long as neither changes."""
+        case = self.get(case_id)
+        with case.lock:
+            self._open(case)
+            capture_id = self._capture_id(case)
+            if case.portrait_b64 is None:
+                raise CaseConflict("Read the ID card first (no portrait found on it yet)", code="card_missing")
+            if capture_id is None:
+                raise CaseConflict("Take the selfie first", code="selfie_missing")
+            result = _public(self.face_match.verify(_decode_b64(case.portrait_b64), capture_id))
+            case.face_match, case.face_match_for = result, (capture_id, case.portrait_b64[:64])
+            return result
 
     def start_capture(self, case_id: str, check_modes: dict | None = None) -> str:
         """`check_modes` is passed to face capture, which honours it only in
@@ -182,10 +205,13 @@ class CaseService:
 
             results: dict[str, ModuleResult | str | None] = {"document": case.document, "selfie": _public(selfie)}
             results["antispoof"] = self._run(lambda: self.antispoof.verify(capture_id))
-            results["face_match"] = (
-                self._run(lambda: self.face_match.verify(_decode_b64(case.portrait_b64), capture_id))
-                if case.portrait_b64 else None
-            )
+            if case.portrait_b64 and case.face_match_for == (capture_id, case.portrait_b64[:64]):
+                results["face_match"] = case.face_match
+            else:
+                results["face_match"] = (
+                    self._run(lambda: self.face_match.verify(_decode_b64(case.portrait_b64), capture_id))
+                    if case.portrait_b64 else None
+                )
             results["liveness"] = None
             if case.liveness_session_id is not None:
                 results["liveness"] = self._run(lambda: self.liveness.result(case.liveness_session_id),
