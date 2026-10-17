@@ -552,9 +552,10 @@ def test_dev_page_exists_only_in_debug(monkeypatch):
 
     inputs = re.findall(r'<input[^>]*type="file"[^>]*>', page.text)
     assert len(inputs) == 1 and 'id="card"' in inputs[0]
-    assert "/v1/face-match/verify" in page.text
+    # face match now runs inside the case, at /v1/cases/{id}/finalize
     assert "/v1/antispoof/verify" in page.text
     assert "/v1/liveness/sessions" in page.text
+    assert "/v1/cases" in page.text
 
 
 def test_metrics_are_in_feedback_only_in_debug():

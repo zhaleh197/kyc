@@ -359,6 +359,36 @@ class LivenessSettings(BaseSettings):
     antispoof_every_n_frames: int = 2
 
 
+class OrchestratorSettings(BaseSettings):
+    """One customer's verification as a case. See specs/07-orchestrator.md."""
+
+    model_config = SettingsConfigDict(env_prefix="KYC_ORCH_", env_file=".env", extra="ignore")
+
+    # Bump on any change below, so a stored verdict can be explained with the
+    # rules that produced it.
+    policy_version: str = "2026-10-17.1"
+    require_liveness: bool = True
+    case_ttl_s: int = 1800
+    max_document_attempts: int = 3
+    max_capture_attempts: int = 3
+    max_liveness_attempts: int = 3
+    # A failing module's reasons decide between rejection and a human look.
+    # Codes listed here reject; any other failure goes to manual review - a
+    # national-id checksum failure may be a misread, an OCR miss may be glare.
+    reject_codes: list[str] = Field(
+        default_factory=lambda: [
+            "spoof_detected",  # 04: print / screen on the selfie
+            "spoof_during_session",  # 05 with antispoof_on_frames=block
+            "faces_do_not_match",  # 03: card and selfie are different people
+            "face_changed",  # 05: someone else did the liveness tasks
+            "still_face_mismatch",  # 02
+            "card_expired",  # 01
+        ]
+    )
+    # Warnings that should still reject (business rule), e.g. ["under_age"].
+    reject_warning_codes: list[str] = Field(default_factory=list)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="KYC_", env_file=".env", extra="ignore")
 
@@ -380,6 +410,7 @@ class Settings(BaseSettings):
     face_match: FaceMatchSettings = Field(default_factory=FaceMatchSettings)
     antispoof: AntiSpoofSettings = Field(default_factory=AntiSpoofSettings)
     liveness: LivenessSettings = Field(default_factory=LivenessSettings)
+    orchestrator: OrchestratorSettings = Field(default_factory=OrchestratorSettings)
 
     def model_path(self, name: str) -> Path:
         return self.models_dir / name

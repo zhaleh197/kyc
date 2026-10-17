@@ -22,6 +22,7 @@ from kyc.modules.face_capture.router import router as face_capture_router
 from kyc.modules.face_match.router import router as face_match_router
 from kyc.modules.liveness.router import router as liveness_router
 from kyc.modules.ocr.router import router as ocr_router
+from kyc.modules.orchestrator.router import router as cases_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("kyc")
@@ -58,13 +59,14 @@ def create_app() -> FastAPI:
 
     @app.get("/health", tags=["ops"])
     def health() -> dict:
-        return {"status": "ok", "modules": ["ocr", "face_quality", "face_match", "antispoof", "liveness"]}
+        return {"status": "ok", "modules": ["ocr", "face_quality", "face_match", "antispoof", "liveness", "cases"]}
 
     app.include_router(ocr_router)
     app.include_router(face_capture_router)
     app.include_router(face_match_router)
     app.include_router(antispoof_router)
     app.include_router(liveness_router)
+    app.include_router(cases_router)
     if settings.debug:
         from kyc.api.dev import router as dev_router
 

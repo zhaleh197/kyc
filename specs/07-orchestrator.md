@@ -1,6 +1,6 @@
 # 07 — Orchestrator (end-to-end verification)
 
-Status: **up-front spec, not started.** Every module README/docstring already
+Status: **in progress** (branch `orchestrator`, 2026-10-17): `kyc/modules/orchestrator/`, see §11. Originally an up-front spec, not started. Every module README/docstring already
 assumes it exists ("the orchestrator aggregates them into one verdict").
 `phase1_facedetect/claude_api/main.py` has a `/kyc/full` endpoint with a
 weighted-sum score (e.g. forensics weight 0.20) — the shape to avoid, see §4.
@@ -110,3 +110,44 @@ case per verdict.
 - Multi-tenant from day one?
 - Webhook to the client on verdict, or polling?
 - Does the business need a registry check (06 §11) inside the case flow?
+
+## 11. Build log (2026-10-17)
+
+Built as specified in §3–§4: `POST /v1/cases`, `/document`, `/capture`,
+`/liveness`, `/finalize`, `GET /v1/cases/{id}`. Policy in
+`orchestrator/policy.py` as a pure function; service in
+`orchestrator/service.py`; every module reached through its public pipeline
+methods.
+
+Decisions taken while building:
+
+- **Server-held links.** The case starts the capture session, liveness starts
+  from that capture's `capture_id`, face match uses the portrait OCR cropped
+  from this case's card — the portrait never leaves the server and is dropped
+  after the verdict. Nothing a client sends can substitute one of them.
+- **Failure → outcome.** `reject_codes` (default: `spoof_detected`,
+  `spoof_during_session`, `faces_do_not_match`, `face_changed`,
+  `still_face_mismatch`, `card_expired`) reject; **any other failure goes to
+  manual review** (a checksum failure may be a misread). Warnings review,
+  unless listed in `reject_warning_codes` (business rule, e.g. `under_age`).
+- **O1:** a step missing or a module unavailable (5xx) → manual review,
+  never approved; a non-pass with no blocking reason still blocks.
+- **Finalize refuses an incomplete case** (409 `case_incomplete`, listing the
+  missing steps) rather than locking it with a "missing" verdict; once
+  finalized the case is frozen and finalize is idempotent.
+- **Attempts** per step (document / selfie / liveness, default 3) → 409
+  `attempts_exhausted`. A new selfie clears the previous liveness session.
+- Verdict carries `policy_version`, the blocking reasons with their outcome,
+  per-step summaries, full module results without images, the OCR values for
+  the operator, and `review_score` (min module score — ranking only).
+
+End to end with the real models (dev machine, liveness off for the run):
+the tester's card + selfie → **manual_review** (face 0.433 on a low-res
+screenshot selfie, checksum misread, anti-spoof "retake"); another person's
+card + the same selfie → **rejected** (`faces_do_not_match`, 0.138).
+
+Open: auth / tenants (O5) — **blocker before any deployment**, as for every
+endpoint; persistence (in memory today); retention period (legal); a
+`retake_low_quality` from anti-spoof at finalize currently means manual
+review — the client should instead be sent back to the selfie step before
+finalizing.

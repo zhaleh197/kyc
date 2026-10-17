@@ -115,6 +115,12 @@
       <figure><img id="selfieThumb" alt=""><figcaption>سلفی گرفته‌شده</figcaption></figure>
     </div>
     <div class="verdict" id="verdict" style="display:none"></div>
+    <div style="margin-top:16px">
+      <h2>نتیجهٔ نهایی پرونده</h2>
+      <p class="muted" id="caseInfo">پرونده با «شروع» ساخته می‌شود.</p>
+      <button class="primary" id="finalize" type="button" disabled>نتیجهٔ نهایی پرونده</button>
+      <div class="verdict" id="caseVerdict" style="display:none"></div>
+    </div>
     <div id="ocrBox" style="display:none; margin-top:12px">
       <h2>اطلاعات کارت ملی (OCR)</h2>
       <table id="ocrFields" style="direction:rtl"></table>
@@ -176,7 +182,7 @@
     hint.className = cls; hint.textContent = text;
     $("lookHere").className = cls.replace("hint-main", "").trim(); $("lookMsg").textContent = text;
   }
-  let captureId = null, selfieB64 = null;
+  let captureId = null, selfieB64 = null, caseId = null;
   // Check groups (server: CHECK_GROUPS in kyc/modules/face_capture/quality.py).
   // [group, label, default mode] - groups/defaults match CHECK_GROUPS and
   // DEFAULT_CHECK_MODES in kyc/modules/face_capture/quality.py.
@@ -300,10 +306,15 @@
     const modes = Object.fromEntries(checkBoxes().map((sel, i) => [sel.dataset.check, sel.value])
       .filter(([k, v], i) => v !== CHECKS[i][2]));
     try {
-      sessionId = (await api("/v1/face-capture/sessions", {
+      // Everything runs inside one verification case (/v1/cases): the case
+      // starts the capture session, so the selfie it judges is this one.
+      caseId = (await api("/v1/cases", { method: "POST" })).case_id;
+      sessionId = (await api(`/v1/cases/${caseId}/capture`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ check_modes: modes }),
-      })).session_id;
+      })).capture_session_id;
+      $("caseInfo").textContent = "پرونده: " + caseId;
+      $("finalize").disabled = false; $("caseVerdict").style.display = "none";
     } catch (e) {
       setHint("hint-main err", "شروع نشد: " + e.message); stopCamera(false); return;
     }
@@ -390,27 +401,12 @@
     const v = $("verdict");
     v.className = "verdict"; v.style.display = "block"; v.textContent = "در حال خواندن کارت…";
     try {
-      const fd = new FormData(); fd.append("file", file, file.name); fd.append("return_portrait", "true");
-      const ocr = await api("/v1/ocr/document", { method: "POST", body: fd });
+      const fd = new FormData(); fd.append("file", file, file.name);
+      const ocr = await api(`/v1/cases/${caseId}/document`, { method: "POST", body: fd });
       showOcr(ocr);
-      const portrait = ocr.data.portrait_base64;
-      if (!portrait) {
-        const why = ocr.reasons.filter((r) => r.severity === "error").map((r) => r.message_fa).join("، ");
-        v.className = "verdict fail"; v.textContent = "عکس روی کارت پیدا نشد" + (why ? ": " + why : ""); return;
-      }
-      $("cardPortrait").src = "data:image/jpeg;base64," + portrait;
-      $("selfieThumb").src = "data:image/jpeg;base64," + selfieB64;
-      $("pair").style.display = "flex";
-      v.textContent = "در حال مقایسه…";
-      const m = await api("/v1/face-match/verify/base64", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reference_base64: portrait, capture_id: captureId }),
-      });
-      const sim = m.data.similarity, t = m.data.thresholds;
-      v.className = "verdict " + m.decision;
-      v.innerHTML = `${VERDICT_FA[m.decision]} — شباهت <b>${sim === null ? "—" : sim.toFixed(3)}</b>
-        <div class="muted">قبول ≥ ${t.accept_above} · رد &lt; ${t.reject_below}${m.reasons.length ? " · " + m.reasons.map((r) => r.message_fa).join("، ") : ""}</div>`;
-      $("result").textContent = JSON.stringify(m, null, 2);
+      // The card portrait stays on the server; face match runs at finalize.
+      v.className = "verdict " + (ocr.decision === "fail" ? "fail" : "pass");
+      v.textContent = "کارت در پرونده ثبت شد — مقایسهٔ چهره با سلفی در «نتیجهٔ نهایی پرونده» انجام می‌شود";
     } catch (e) {
       v.className = "verdict fail";
       v.textContent = e.status === 404 ? "سلفی منقضی شده؛ دوباره سلفی بگیرید." : "خطا: " + e.message;
@@ -443,9 +439,8 @@
     $("liveStart").disabled = true; $("liveVerdict").style.display = "none";
     let session;
     try {
-      session = await api("/v1/liveness/sessions", {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ capture_id: captureId }),
-      });
+      const started = await api(`/v1/cases/${caseId}/liveness`, { method: "POST" });
+      session = { session_id: started.liveness_session_id, first_instruction_fa: started.first_instruction_fa };
       stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
     } catch (e) {
       $("liveProgress").textContent = "شروع نشد: " + e.message; $("liveStart").disabled = false; return;
@@ -495,6 +490,31 @@
     $("liveStart").disabled = false;
   }
   $("liveStart").onclick = startLiveness;
+
+  // ---------------------------------------------------------------- finalize
+  const CASE_FA = { approved: "✅ تأیید شد", manual_review: "⚠️ بررسی دستی", rejected: "❌ رد شد" };
+  const STEP_FA = { document: "کارت ملی", selfie: "سلفی", antispoof: "تشخیص جعل", face_match: "تطبیق چهره", liveness: "زنده بودن" };
+  async function finalizeCase() {
+    const v = $("caseVerdict"); v.style.display = "block"; v.className = "verdict"; v.textContent = "در حال جمع‌بندی…";
+    try {
+      const r = await api(`/v1/cases/${caseId}/finalize`, { method: "POST" });
+      const esc = (x) => String(x ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+      const fm = r.module_results.face_match, as = r.module_results.antispoof;
+      const steps = Object.entries(r.steps).map(([k, st]) =>
+        `${STEP_FA[k] || k}: ${st.status === "done" ? st.decision : st.status}`).join(" · ");
+      v.className = "verdict " + ({ approved: "pass", manual_review: "review", rejected: "fail" }[r.verdict]);
+      v.innerHTML = `<b>${CASE_FA[r.verdict]}</b>
+        ${r.blocking_reasons.length ? "<br>" + r.blocking_reasons.map((b) => `• ${esc(STEP_FA[b.step] || b.step)}: ${esc(b.message_fa)} (${b.outcome === "rejected" ? "رد" : "بررسی دستی"})`).join("<br>") : ""}
+        <div class="muted">${esc(steps)}<br>شباهت چهره به کارت: ${fm ? fm.data.similarity : "—"} · زنده بودن سلفی: ${as && as.data.live_score != null ? as.data.live_score : "—"} · سیاست: ${esc(r.policy_version)}</div>`;
+      $("result").textContent = JSON.stringify(r, null, 2);
+    } catch (e) {
+      v.className = "verdict fail";
+      v.textContent = e.body && e.body.details && e.body.details.missing
+        ? "هنوز انجام نشده: " + e.body.details.missing.map((m) => STEP_FA[m] || m).join("، ")
+        : "خطا: " + e.message;
+    }
+  }
+  $("finalize").onclick = finalizeCase;
 
   $("start").onclick = start;
   $("stop").onclick = () => stopCamera();
