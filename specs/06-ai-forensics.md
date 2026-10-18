@@ -156,3 +156,40 @@ Priority note: the app captures the card from the camera, so a digitally
 edited file is the harder attack to mount; printing or showing the edited
 card on a screen and photographing it erases pixel traces. Card recapture
 (print / screen) detection is the next piece of 06.
+
+## 13. Card recapture - screen / print (2026-10-19)
+
+Built (branch `card-recapture`): `kyc/modules/forensics/recapture.py`,
+region `card` (the OCR container box on the photo as submitted). Four
+explainable features - luma spectral peak (moire, pixel grid, halftone),
+chroma spectral peak (coloured moire), chroma vs luma fine detail, luma
+dynamic range - scored one-class against genuine photos like the edit
+signals. Reason `card_recapture_suspected`, warn only.
+
+First look, on the anti-spoof selfie set (not cards): monitor shots have
+lower chroma fine detail (~-2.7 vs ~-2.1) but overlap real ones; the
+spectral peak does not separate on its own. Expect the hand features to be a
+baseline; the likely end state is a **learned patch classifier** (small
+ImageNet-pretrained CNN on native-resolution card patches, fine-tuned on
+genuine vs screen vs print), which needs the photos below. Licence of the
+pretrained weights to be checked before use (the project is commercial).
+
+### Data protocol (user collects, ~10 real cards)
+
+One folder per kind, file names `<card>-<phone>-<n>.jpg`:
+
+| folder | what | per card |
+|---|---|---|
+| genuine/ | the real card, phone camera, varied light / angle / background, 2-3 phones, sent as *file* | ~15 |
+| forwarded/ | some of those sent through a messenger as *photo* | 2-3 |
+| screen/ | card photo shown on a monitor and on another phone, photographed | ~6 |
+| print/ | colour print (plain, glossy if possible), photographed | ~4 |
+
+The hand-edited labelled set can be shown on screens / printed too: more
+attack shots at no extra cards.
+
+`python -m scripts.calibrate_forensics PHOTOS_DIR --edited .data/ir_card_norm`
+fits the genuine reference on some cards and reports, on held-out cards:
+FPR (genuine + forwarded), TPR for screen / print, TPR for synthetic edits,
+and the warn rate on the hand-edited set. `--write` stores
+models/forensics_calibration.json - only after reviewing that report.

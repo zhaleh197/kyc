@@ -22,31 +22,34 @@ from pathlib import Path
 
 import numpy as np
 
-from .signals import FEATURES
-
 # region (OCR field key) -> cells. 10 = the national id's digits; dates are
 # 10 characters (yyyy/mm/dd) too.
 REGIONS = {"portrait": 1, "national_id": 10, "birth_date": 10, "expiry_date": 10}
+# The whole card, scored with the recapture (screen / print) features.
+CARD = "card"
 
 Cells = list[dict[str, float]]
 
 
-def fit(genuine: list[dict[str, Cells]], fpr: float) -> dict:
+def fit(genuine: list[dict[str, Cells]], fpr: float, regions_to_fit=None) -> dict:
+    """`genuine`: one {region: cells} per genuine photo. Regions with fewer
+    than 20 photos are left out (not judged)."""
     regions = {}
-    for region in REGIONS:
+    for region in regions_to_fit or REGIONS:
         rows = [g[region] for g in genuine if region in g]
         if len(rows) < 20:
             continue
         pooled = [cell for row in rows for cell in row]
+        features = list(pooled[0])
         median, scale = {}, {}
-        for feat in FEATURES:
+        for feat in features:
             v = np.array([c[feat] for c in pooled])
             med = float(np.median(v))
             median[feat] = round(med, 5)
             scale[feat] = round(max(float(np.median(np.abs(v - med))) * 1.4826, 1e-3), 5)
-        entry = {"cells": REGIONS[region], "median": median, "scale": scale, "n": len(rows)}
+        entry = {"cells": REGIONS.get(region, 1), "median": median, "scale": scale, "n": len(rows)}
         devs = [deviations({"regions": {region: entry}}, region, row) for row in rows]
-        limits = {f: round(float(np.quantile([d[f] for d in devs], 1 - fpr / len(FEATURES))), 3) for f in FEATURES}
+        limits = {f: round(float(np.quantile([d[f] for d in devs], 1 - fpr / len(features))), 3) for f in features}
         # A feature that never varies on genuine cards (clone on the portrait,
         # a single cell) has nothing to say about this region.
         entry["warn_above"] = {f: v for f, v in limits.items() if v > 0}

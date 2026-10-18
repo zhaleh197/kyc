@@ -219,3 +219,47 @@ def test_a_forensics_crash_keeps_the_upload_but_not_an_approval():
     case = svc.create()
     svc.submit_document(case.case_id, b"jpeg")  # does not raise
     assert case.forensics == UNAVAILABLE
+
+
+# ------------------------------------------------- screen / print recapture
+
+
+def big_card(seed: int = 0) -> np.ndarray:
+    return cv2.resize(card(seed), (800, 640), interpolation=cv2.INTER_LINEAR)
+
+
+def with_moire(img: np.ndarray, colour: bool = False) -> np.ndarray:
+    """A screen's beat pattern: a fine diagonal sinusoid, optionally only in
+    one colour channel (subpixels beating against the camera's grid)."""
+    yy, xx = np.mgrid[0:img.shape[0], 0:img.shape[1]]
+    wave = 14 * np.sin(2 * np.pi * (0.21 * xx + 0.13 * yy))
+    out = img.astype(np.float32)
+    if colour:
+        out[:, :, 2] += wave
+    else:
+        out += wave[:, :, None]
+    return jpeg(np.clip(out, 0, 255).astype(np.uint8), 92)
+
+
+def test_moire_raises_the_spectral_peak():
+    from kyc.modules.forensics.recapture import card_features
+
+    plain, moire = card_features(big_card()), card_features(with_moire(big_card()))
+    assert moire["spectral_peak"] > plain["spectral_peak"] + 1.0
+    coloured = card_features(with_moire(big_card(), colour=True))
+    assert coloured["chroma_peak"] > plain["chroma_peak"] + 1.0
+    assert card_features(card()[:200, :200]) is None  # too small for the spectrum
+
+
+def test_a_recaptured_card_warns_for_review():
+    from kyc.modules.forensics.recapture import card_features
+
+    # the reference goes through the same final save as the photos checked
+    rows = [{"card": [card_features(jpeg(big_card(s), 95))]} for s in range(25)]
+    calib = fit(rows, 0.05, ["card"])
+    box = [0, 0, 800, 640]
+    out = pipeline(calib).run(jpeg_bytes(with_moire(big_card(90)), 95), {"card": box})
+    assert [r.code for r in out.reasons] == ["card_recapture_suspected"]
+    assert out.decision is Decision.REVIEW
+    clean = pipeline(calib).run(jpeg_bytes(big_card(91), 95), {"card": box})
+    assert clean.decision is Decision.PASS, clean.data["signals"]

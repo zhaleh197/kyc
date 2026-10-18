@@ -403,8 +403,9 @@ class ForensicsSettings(BaseSettings):
 
     enabled: bool = True
     calibration_file: str = "forensics_calibration.json"
-    # Which regions may warn; drop one to silence it (F4).
-    regions: list[str] = Field(default_factory=lambda: ["portrait", "national_id", "birth_date", "expiry_date"])
+    # Which regions may warn; drop one to silence it (F4). "card" = the
+    # screen / print recapture check on the whole card.
+    regions: list[str] = Field(default_factory=lambda: ["portrait", "national_id", "birth_date", "expiry_date", "card"])
     # Multiplies every calibrated limit: > 1 warns less often.
     limit_scale: float = 1.0
     # EXIF "Software" naming a photo editor -> an info note, never a warning:

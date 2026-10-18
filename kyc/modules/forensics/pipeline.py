@@ -4,6 +4,7 @@
         -> per region: noise / ELA / JPEG-grid features (signals.py)
         -> deviation from genuine cards, per feature (calibration.py)
         -> score >= 1 on an enabled region -> warn -> review
+        -> whole card: screen / print recapture features (recapture.py)
         -> EXIF editor tag -> info only
 
 Advisory by construction: nothing here emits an error (spec 06 F5), so the
@@ -21,6 +22,7 @@ from kyc.core.imaging import decode_image
 from kyc.core.schemas import Decision, ModuleResult, Reason, Timer
 
 from . import calibration as calib_mod
+from .recapture import card_features
 from .signals import PhotoMaps
 
 MODULE_NAME = "forensics"
@@ -79,7 +81,11 @@ class DocumentForensicsPipeline:
                     box = boxes.get(region)
                     if region not in cfg.regions or not box:
                         continue
-                    cells = maps.features(box, ref["cells"])
+                    if region == calib_mod.CARD:
+                        feats = card_features(image, box)
+                        cells = [feats] if feats else None
+                    else:
+                        cells = maps.features(box, ref["cells"])
                     if cells is None:
                         continue
                     score, feature = calib_mod.region_score(calib, region, cells)
@@ -107,6 +113,13 @@ class DocumentForensicsPipeline:
 
     @staticmethod
     def _finding(region: str, feature: str, score: float) -> Reason:
+        if region == calib_mod.CARD:
+            return Reason.warn(
+                "card_recapture_suspected",
+                f"The card looks photographed from a screen or a print ({feature}, {score:.2f}x the limit)",
+                "به نظر می‌رسد از صفحهٔ نمایش یا نسخهٔ چاپی کارت عکس گرفته شده است",
+                "card",
+            )
         if region == "portrait":
             return Reason.warn(
                 "portrait_region_inconsistent",
