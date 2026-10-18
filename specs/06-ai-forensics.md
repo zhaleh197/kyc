@@ -1,9 +1,8 @@
 # 06 — AI forensics (document tampering, deepfakes, injection)
 
-Status: **up-front spec, not started.** The only prior code is a heuristic
-`AIForensicsChecker` in `phase1_facedetect/claude_api/main.py` (ELA + noise +
-a GAN-frequency heuristic, thresholds 0.55 / 0.60, unmeasured). It is not a
-baseline worth migrating.
+Status: **06a code built (2026-10-19), not calibrated - it judges nothing
+until models/forensics_calibration.json exists.** 06b (selfie) not started.
+See §12 for what was built and why it is not calibrated yet.
 
 ## 1. Purpose
 
@@ -120,3 +119,40 @@ per tamper type; both in the manifest.
 - Build 06 at all before the other modules ship? Recommendation: 06a first
   (cheap, uses OCR boxes, synthetic data is easy); 06b after 05, since
   liveness + anti-spoof already cover the most common selfie attacks.
+
+## 12. Build log (2026-10-19)
+
+Built (branch `forensics`): `kyc/modules/forensics/` - no AI model, four
+classical signals, each comparing a region with its surroundings in the same
+photo: noise level, ELA (recompression error), JPEG 8x8 grid alignment, and
+clone (a character cell whose noise pattern matches elsewhere in the field -
+copied digits carry identical sensor noise, printed ones never do). Digit
+fields are scored per character cell. Per-feature limits come from a genuine
+reference (`calibration.py`, `scripts/eval_forensics.py`). Advisory only:
+warn -> manual review, never error (F5). Hidden from the customer's result
+screen. OCR now reports `source_boxes` (fields on the photo as submitted),
+because a downscale or deskew erases the traces.
+
+**Why it is not calibrated.** The first calibration used the labelled card
+set as "genuine". The user then confirmed that *every* card in it is edited
+(names swapped or brought from other cards, national-id digits cut and
+moved; portraits untouched). The numbers from that run (1% FPR; 72%
+portrait paste, 7-13% digit edits caught) measured "a second edit on an
+already edited card" and were discarded.
+
+That set is now the **real tamper test set** (human-made edits, the attack
+we expect), not a genuine reference. Plan:
+
+1. Genuine reference: the user's ~10 real cards photographed fresh - several
+   phones, light, angles; sent as files, plus a few deliberately sent through
+   a messenger as "photo" (recompressed, must not warn). Pixel forensics
+   depends on capture conditions, not on whose card it is, so ~10 cards x
+   3 phones x 5 shots is a usable start.
+2. Synthetic edits made from those photos (eval_forensics.py's tamper types).
+3. TPR on the human-edited set - ideally the edited files *before* Roboflow
+   (it resized and re-saved them, which erases much of the trace). Asked.
+
+Priority note: the app captures the card from the camera, so a digitally
+edited file is the harder attack to mount; printing or showing the edited
+card on a screen and photographing it erases pixel traces. Card recapture
+(print / screen) detection is the next piece of 06.

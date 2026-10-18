@@ -31,7 +31,7 @@ from kyc.core.imaging import decode_image
 from kyc.core.schemas import ModuleResult
 
 from .archive import CaseArchive, RetentionClock
-from .policy import STEPS, UNAVAILABLE, decide
+from .policy import OPTIONAL_STEPS, STEPS, UNAVAILABLE, decide
 
 logger = logging.getLogger("kyc.cases")
 
@@ -55,6 +55,7 @@ class Case:
     customer: str = "local"  # cases are only visible to the customer that opened them
     created_at: float = field(default_factory=time.time)
     document: ModuleResult | None = None
+    forensics: ModuleResult | str | None = None  # 06a on the card photo; not shown to the customer
     portrait_b64: str | None = None  # kept server-side for face match; never returned
     card_bytes: bytes | None = None  # the uploaded card photo, for the archive
     document_attempts: int = 0
@@ -79,10 +80,11 @@ def _public(result: ModuleResult) -> ModuleResult:
 
 class CaseService:
     def __init__(self, settings: Settings | None = None, *, ocr, capture, antispoof, face_match, liveness,
-                 archive: CaseArchive | None = None):
+                 archive: CaseArchive | None = None, forensics=None):
         self.settings = settings or get_settings()
         self.ocr, self.capture, self.antispoof = ocr, capture, antispoof
         self.face_match, self.liveness = face_match, liveness
+        self.forensics = forensics  # None = switched off for this deployment
         self._cases: dict[str, Case] = {}
         self._lock = threading.Lock()
         self.archive = archive
@@ -136,6 +138,14 @@ class CaseService:
             case.document = _public(result)
             case.portrait_b64 = result.data.get("portrait_base64")
             case.card_bytes = data
+            case.forensics = None
+            if self.forensics is not None:
+                boxes = result.data.get("source_boxes") or {}
+                try:
+                    case.forensics = self._run(lambda: self.forensics.run(data, boxes))
+                except Exception:  # noqa: BLE001 - an advisory check must not lose the upload
+                    logger.exception("forensics failed on case %s", case.case_id)
+                    case.forensics = UNAVAILABLE
             case.face_match, case.face_match_for = None, None  # a new card needs a new match
             # The caller gets the portrait cropped from the card they just sent
             # (to show it); face match always uses the server's own copy.
@@ -218,6 +228,7 @@ class CaseService:
                                    details={"missing": missing})
 
             results: dict[str, ModuleResult | str | None] = {"document": case.document, "selfie": _public(selfie)}
+            results["forensics"] = case.forensics
             results["antispoof"] = self._run(lambda: self.antispoof.verify(capture_id))
             if case.portrait_b64 and case.face_match_for == (capture_id, case.portrait_b64[:64]):
                 results["face_match"] = case.face_match
@@ -231,7 +242,8 @@ class CaseService:
                 results["liveness"] = self._run(lambda: self.liveness.result(case.liveness_session_id),
                                                 not_finished=None)
 
-            required = STEPS if cfg.require_liveness else tuple(s for s in STEPS if s != "liveness")
+            optional = OPTIONAL_STEPS if cfg.require_liveness else (*OPTIONAL_STEPS, "liveness")
+            required = tuple(s for s in STEPS if s not in optional or (s == "forensics" and self.forensics))
             policy = decide(results, cfg, required)
             document = case.document
             case.verdict = {

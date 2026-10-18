@@ -15,7 +15,7 @@ upside-down face (similarity 0.09 instead of 0.44).
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import cv2
 import numpy as np
@@ -33,6 +33,9 @@ class Orientation:
     deskew_deg: float  # small rotation applied before it, degrees counter-clockwise
     detections: list[Detection]
     layout_score: float
+    # 3x3 homography from the input image to `image`, so boxes found on the
+    # upright card can be mapped back onto the original photo.
+    matrix: np.ndarray = field(default_factory=lambda: np.eye(3))
 
 
 def estimate_skew(gray: np.ndarray) -> float:
@@ -55,16 +58,32 @@ def estimate_skew(gray: np.ndarray) -> float:
     return float((edges[peak] + edges[peak + 1]) / 2)
 
 
-def rotate_bound(img: np.ndarray, angle: float) -> np.ndarray:
-    """Rotate counter-clockwise by `angle` degrees, growing the canvas so
-    nothing is cut off."""
-    h, w = img.shape[:2]
+def rotate_bound_matrix(w: int, h: int, angle: float) -> tuple[np.ndarray, tuple[int, int]]:
+    """2x3 affine for rotate_bound on a (w, h) image, and the new canvas size."""
     m = cv2.getRotationMatrix2D((w / 2, h / 2), angle, 1.0)
     cos, sin = abs(m[0, 0]), abs(m[0, 1])
     nw, nh = int(h * sin + w * cos), int(h * cos + w * sin)
     m[0, 2] += nw / 2 - w / 2
     m[1, 2] += nh / 2 - h / 2
-    return cv2.warpAffine(img, m, (nw, nh), borderMode=cv2.BORDER_REPLICATE)
+    return m, (nw, nh)
+
+
+def rotate_bound(img: np.ndarray, angle: float) -> np.ndarray:
+    """Rotate counter-clockwise by `angle` degrees, growing the canvas so
+    nothing is cut off."""
+    h, w = img.shape[:2]
+    m, size = rotate_bound_matrix(w, h, angle)
+    return cv2.warpAffine(img, m, size, borderMode=cv2.BORDER_REPLICATE)
+
+
+def quarter_turn_matrix(w: int, h: int, rotation: int) -> np.ndarray:
+    """3x3 homography for cv2.rotate by `rotation` degrees clockwise on (w, h)."""
+    return {
+        0: np.eye(3),
+        90: np.array([[0.0, -1.0, h - 1.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]),
+        180: np.array([[-1.0, 0.0, w - 1.0], [0.0, -1.0, h - 1.0], [0.0, 0.0, 1.0]]),
+        270: np.array([[0.0, 1.0, 0.0], [-1.0, 0.0, w - 1.0], [0.0, 0.0, 1.0]]),
+    }[rotation]
 
 
 _QUARTER = {90: cv2.ROTATE_90_CLOCKWISE, 180: cv2.ROTATE_180, 270: cv2.ROTATE_90_COUNTERCLOCKWISE}
@@ -117,7 +136,10 @@ def orient(
     # Near +-45 the folded histogram cannot tell a tilt from diagonal
     # content (measured: -42.5 on a card tilted -20); quarter turns cover
     # large rotations, so only trust moderate estimates.
+    deskew = np.eye(3)
     if min_skew_deg <= abs(skew) <= max_skew_deg:
+        h, w = img.shape[:2]
+        deskew[:2] = rotate_bound_matrix(w, h, skew)[0]
         img = rotate_bound(img, skew)
         first = detect(img)
     else:
@@ -136,7 +158,8 @@ def orient(
         fit = score + wide_fraction(found, profile) + (0.05 if rotation == 0 else 0.0)
         rank = (round(fit, 3), len(found), float(np.mean([d.confidence for d in found.values()])) if found else 0.0)
         if best is None or rank > best_rank:
-            best, best_rank = Orientation(candidate, rotation, round(skew, 1), detections, score), rank
+            turn = quarter_turn_matrix(img.shape[1], img.shape[0], rotation)
+            best, best_rank = Orientation(candidate, rotation, round(skew, 1), detections, score, turn @ deskew), rank
         if rotation == 0 and score == 1.0 and len(found) >= len(profile.class_names) - 2:
             break  # upright and complete: no need to try other turns
     return best

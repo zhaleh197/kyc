@@ -21,7 +21,10 @@ from kyc.core.config import OrchestratorSettings
 from kyc.core.schemas import Decision, ModuleResult, Severity
 
 # The order steps appear in a verdict, and what each is called in it.
-STEPS = ("document", "selfie", "antispoof", "face_match", "liveness")
+STEPS = ("document", "forensics", "selfie", "antispoof", "face_match", "liveness")
+# Steps that may be switched off for a deployment: absent means skipped, not
+# missing. Forensics is advisory (spec 06): it can only ask for a human look.
+OPTIONAL_STEPS = ("forensics",)
 
 
 class Verdict(str, Enum):

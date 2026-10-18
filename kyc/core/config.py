@@ -366,7 +366,7 @@ class OrchestratorSettings(BaseSettings):
 
     # Bump on any change below, so a stored verdict can be explained with the
     # rules that produced it.
-    policy_version: str = "2026-10-17.1"
+    policy_version: str = "2026-10-19.1"  # .1: forensics step (advisory)
     require_liveness: bool = True
     case_ttl_s: int = 1800
     max_document_attempts: int = 3
@@ -387,6 +387,29 @@ class OrchestratorSettings(BaseSettings):
     )
     # Warnings that should still reject (business rule), e.g. ["under_age"].
     reject_warning_codes: list[str] = Field(default_factory=list)
+
+
+class ForensicsSettings(BaseSettings):
+    """Document forensics on the card photo: was it edited? See
+    specs/06-ai-forensics.md.
+
+    Advisory only (spec 06 F5): a signal can send a case to manual review
+    (warn), never reject it, until its precision is measured on real forged
+    cards - so far it is measured on synthetic edits only. Region limits come
+    from models/forensics_calibration.json (scripts/eval_forensics.py).
+    """
+
+    model_config = SettingsConfigDict(env_prefix="KYC_FORENSICS_", env_file=".env", extra="ignore")
+
+    enabled: bool = True
+    calibration_file: str = "forensics_calibration.json"
+    # Which regions may warn; drop one to silence it (F4).
+    regions: list[str] = Field(default_factory=lambda: ["portrait", "national_id", "birth_date", "expiry_date"])
+    # Multiplies every calibrated limit: > 1 warns less often.
+    limit_scale: float = 1.0
+    # EXIF "Software" naming a photo editor -> an info note, never a warning:
+    # metadata is trivial to strip or forge.
+    metadata_check: bool = True
 
 
 class Settings(BaseSettings):
@@ -429,6 +452,7 @@ class Settings(BaseSettings):
     antispoof: AntiSpoofSettings = Field(default_factory=AntiSpoofSettings)
     liveness: LivenessSettings = Field(default_factory=LivenessSettings)
     orchestrator: OrchestratorSettings = Field(default_factory=OrchestratorSettings)
+    forensics: ForensicsSettings = Field(default_factory=ForensicsSettings)
 
     def model_path(self, name: str) -> Path:
         return self.models_dir / name

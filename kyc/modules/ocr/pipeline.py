@@ -105,7 +105,10 @@ class DocumentOcrPipeline:
 
         with Timer() as timer:
             ensure_min_size(image, cfg.min_image_side)
+            source_size = (image.shape[1], image.shape[0])
             image = rectify.prepare(image, cfg.max_image_side)
+            # source photo -> the frame the boxes end up in (rectify=false only)
+            to_frame = rectify.scale_matrix(source_size, (image.shape[1], image.shape[0]))
 
             if cfg.rectify:
                 card, rectify_reasons = rectify.rectify(image, profile.rectified_size, profile.aspect_ratio)
@@ -143,6 +146,7 @@ class DocumentOcrPipeline:
                 detector = self._detector_factory(profile)  # one instance for every candidate turn
                 o = orient(card, lambda im: detector.detect(im, cfg.detector_conf, cfg.detector_iou), profile)
                 card, detections = o.image, o.detections
+                to_frame = o.matrix @ to_frame
                 orientation = {
                     "rotation": o.rotation, "deskew_deg": o.deskew_deg, "layout_score": round(o.layout_score, 2)
                 }
@@ -152,6 +156,16 @@ class DocumentOcrPipeline:
 
             fields, field_reasons = self._read_fields(card, profile, located)
             reasons += field_reasons
+            source_boxes = {}
+            if not cfg.rectify:
+                # Forensics (06) reads the submitted pixels: a downscale or a
+                # deskew resamples them and erases the traces it looks for.
+                back = np.linalg.inv(to_frame)
+                for spec in profile.fields:
+                    if spec.detector_class in located:
+                        mapped = _map_box(list(located[spec.detector_class].box), back, source_size)
+                        if mapped:
+                            source_boxes[spec.key] = mapped
 
             values = {key: field.value for key, field in fields.items()}
             reasons += profile.validate(values)
@@ -159,7 +173,9 @@ class DocumentOcrPipeline:
             data = DocumentOcrData(
                 profile=profile.id,
                 country=profile.country,
+                source_size=list(source_size),
                 fields=fields,
+                source_boxes=source_boxes,
                 values=values,
                 derived=profile.enrich(values),
                 missing_fields=[f.key for f in profile.value_fields if not values.get(f.key)],
@@ -310,3 +326,10 @@ class DocumentOcrPipeline:
             data=data.model_dump(),
             elapsed_ms=round(timer.ms, 2),
         )
+
+
+def _map_box(box: list[int], matrix: np.ndarray, size: tuple[int, int]) -> list[int] | None:
+    """Bounds of `box`'s corners under `matrix`, clipped to `size`."""
+    x1, y1, x2, y2 = box
+    mapped = rectify.transform_points(matrix, [(x1, y1), (x2, y1), (x2, y2), (x1, y2)], size)
+    return [int(round(v)) for v in mapped] if mapped else None

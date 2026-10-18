@@ -21,6 +21,7 @@ from kyc.core.errors import KycError
 from kyc.modules.antispoof.router import router as antispoof_router
 from kyc.modules.face_capture.router import router as face_capture_router
 from kyc.modules.face_match.router import router as face_match_router
+from kyc.modules.forensics.router import router as forensics_router
 from kyc.modules.liveness.router import router as liveness_router
 from kyc.modules.ocr.router import router as ocr_router
 from kyc.modules.orchestrator.router import router as cases_router
@@ -69,6 +70,7 @@ def create_app() -> FastAPI:
     app.include_router(face_match_router)
     app.include_router(antispoof_router)
     app.include_router(liveness_router)
+    app.include_router(forensics_router)
     app.include_router(cases_router)
     app.include_router(pages.router)
     if settings.debug:

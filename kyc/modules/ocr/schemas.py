@@ -31,7 +31,13 @@ class FieldResult(BaseModel):
 class DocumentOcrData(BaseModel):
     profile: str
     country: str
+    source_size: list[int] | None = Field(None, description="width, height of the photo as submitted")
     fields: dict[str, FieldResult] = Field(default_factory=dict)
+    source_boxes: dict[str, list[int]] = Field(
+        default_factory=dict,
+        description="Every located field (portrait too) on the photo as submitted - before downscale and "
+        "straightening - for forensics, which needs the original pixels",
+    )
     values: dict[str, str | None] = Field(
         default_factory=dict, description="Flat key -> value map for callers that want just the data"
     )

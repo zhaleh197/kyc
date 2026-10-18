@@ -22,6 +22,7 @@ from kyc.core.schemas import ModuleResult
 from kyc.modules.antispoof.router import get_pipeline as antispoof_pipeline
 from kyc.modules.face_capture.router import get_pipeline as capture_pipeline
 from kyc.modules.face_match.router import get_pipeline as match_pipeline
+from kyc.modules.forensics.router import get_pipeline as forensics_pipeline
 from kyc.modules.liveness.router import get_pipeline as liveness_pipeline
 from kyc.modules.liveness.tasks import INSTRUCTIONS_EN, INSTRUCTIONS_FA
 from kyc.modules.ocr.router import get_pipeline as ocr_pipeline
@@ -41,6 +42,7 @@ def get_service() -> CaseService:
         _service = CaseService(
             settings, ocr=ocr_pipeline(), capture=capture_pipeline(), antispoof=antispoof_pipeline(),
             face_match=match_pipeline(), liveness=liveness_pipeline(), archive=build_archive(settings),
+            forensics=forensics_pipeline() if settings.forensics.enabled else None,
         )
     return _service
 
