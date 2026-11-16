@@ -26,6 +26,9 @@ class FieldResult(BaseModel):
     box: list[int] | None = Field(None, description="x1, y1, x2, y2 on the rectified card")
     detection_confidence: float | None = None
     backend: str | None = None
+    lexicon_match: str | None = Field(
+        None, description="exact | ctc | nearest: how the value was matched to the name list; none: no match (review)"
+    )
 
 
 class DocumentOcrData(BaseModel):

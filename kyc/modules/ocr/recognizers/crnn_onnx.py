@@ -130,6 +130,12 @@ class CrnnOnnxRecognizer:
         text, confidence = ctc_greedy_decode(logits, self.charset)
         return Recognition(text=text, confidence=confidence)
 
+    def log_probs(self, image: np.ndarray) -> np.ndarray:
+        """(T, C) log-softmax over `self.charset`, for scoring a fixed list
+        of candidate strings (ocr/lexicon) instead of decoding freely."""
+        logits = self._to_time_major(self.session.run(None, {self.input_name: self._preprocess(image)})[0])
+        return np.log(_softmax(logits) + 1e-12)
+
     def _preprocess(self, image: np.ndarray) -> np.ndarray:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
         h, w = gray.shape[:2]

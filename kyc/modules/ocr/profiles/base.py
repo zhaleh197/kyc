@@ -33,6 +33,7 @@ class FieldSpec:
     required: bool = True
     exact_len: int | None = None   # e.g. 10 for the national id
     charset_hint: str | None = None  # passed to recognisers that support an allowlist
+    lexicon: str | None = None  # closed vocabulary in ocr/lexicon/<name>.txt
 
 
 @dataclass(frozen=True)

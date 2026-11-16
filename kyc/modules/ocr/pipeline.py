@@ -14,6 +14,7 @@ from collections.abc import Callable
 import numpy as np
 
 from kyc.core.config import Settings, get_settings
+from kyc.core.errors import KycError
 from kyc.core.imaging import (
     crop_with_padding,
     decode_image,
@@ -23,7 +24,7 @@ from kyc.core.imaging import (
 )
 from kyc.core.schemas import Decision, ModuleResult, Reason, Severity, Timer
 
-from . import normalize, rectify
+from . import lexicon, normalize, rectify
 from .detector import Detection, FieldDetector, best_per_class
 from .orient import orient
 from .profiles import DocumentProfile, FieldKind, FieldSpec, get_profile
@@ -62,6 +63,7 @@ class DocumentOcrPipeline:
         self.settings = settings or get_settings()
         self._detector_factory = detector_factory or self._default_detector
         self._recognizer_factory = recognizer_factory or self._default_recognizer
+        self._matchers: dict[str, lexicon.NameMatcher] = {}
 
     def _default_detector(self, profile: DocumentProfile) -> FieldDetector:
         return FieldDetector.load(
@@ -73,6 +75,14 @@ class DocumentOcrPipeline:
 
     def _default_recognizer(self, backend_id: str) -> TextRecognizer:
         return get_recognizer(backend_id, self.settings)
+
+    def _matcher(self, name: str) -> lexicon.NameMatcher:
+        cfg = self.settings.ocr
+        if name not in self._matchers:
+            self._matchers[name] = lexicon.NameMatcher(
+                lexicon.load(name), min_score=cfg.lexicon_min_score, min_margin=cfg.lexicon_min_margin
+            )
+        return self._matchers[name]
 
     # ------------------------------------------------------------------ public
 
@@ -241,11 +251,39 @@ class DocumentOcrPipeline:
             result.confidence = round(recognition.confidence, 4)
             result.value = self._normalize(spec, recognition.text)
             result.low_confidence = recognition.confidence < cfg.min_field_confidence
+            if spec.lexicon and cfg.name_lexicon:
+                reasons += self._match_lexicon(spec, result, crop)
 
             reasons += self._field_findings(spec, result)
             results[spec.key] = result
 
         return results, reasons
+
+    def _match_lexicon(self, spec: FieldSpec, result: FieldResult, crop: np.ndarray) -> list[Reason]:
+        """Snap a closed-vocabulary field to its list, or flag it for review."""
+        log_probs = charset = None
+        try:
+            scorer = self._recognizer_factory(self.settings.ocr.lexicon_scorer_backend)
+            if hasattr(scorer, "log_probs"):
+                log_probs, charset = scorer.log_probs(crop), scorer.charset
+        except KycError:
+            pass  # no scorer model: exact and nearest matching still apply
+        match = self._matcher(spec.lexicon).resolve(result.value or "", log_probs, charset)
+        result.lexicon_match = match.method
+        if match.value is not None:
+            result.value = match.value
+            return []
+        if not result.value:
+            return []
+        result.low_confidence = True
+        return [
+            Reason.warn(
+                "name_not_in_list",
+                f"{spec.key} read as {result.value!r}, which is not a known name",
+                f"«{spec.label_fa}» به‌صورت «{result.value}» خوانده شد که نام شناخته‌شده‌ای نیست",
+                spec.key,
+            )
+        ]
 
     @staticmethod
     def _field_findings(spec: FieldSpec, result: FieldResult) -> list[Reason]:

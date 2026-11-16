@@ -177,9 +177,9 @@ IR_NATIONAL_CARD_FRONT = DocumentProfile(
             "national_id", "idnumber", FieldKind.DIGITS, "کد ملی", "National id",
             exact_len=10, charset_hint="0123456789",
         ),
-        FieldSpec("first_name", "name", FieldKind.TEXT, "نام", "First name"),
+        FieldSpec("first_name", "name", FieldKind.TEXT, "نام", "First name", lexicon="given_names_fa"),
         FieldSpec("last_name", "lastname", FieldKind.TEXT, "نام خانوادگی", "Last name"),
-        FieldSpec("father_name", "fathername", FieldKind.TEXT, "نام پدر", "Father name"),
+        FieldSpec("father_name", "fathername", FieldKind.TEXT, "نام پدر", "Father name", lexicon="given_names_fa"),
         FieldSpec(
             "birth_date", "birthday", FieldKind.DATE, "تاریخ تولد", "Birth date",
             charset_hint="0123456789/",
