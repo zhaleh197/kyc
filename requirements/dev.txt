@@ -7,3 +7,8 @@ ruff>=0.7
 # Kaggle training loop: scripts/kaggle_run.py and scripts/roboflow_pull.py
 kaggle>=1.6
 roboflow>=1.1
+
+# Synthetic OCR training lines (training/ocr_synth): HarfBuzz shaping and
+# FreeType rasterising, since PIL without libraqm cannot join Arabic script.
+uharfbuzz>=0.40
+freetype-py>=2.4
