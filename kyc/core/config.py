@@ -74,20 +74,24 @@ class OcrSettings(BaseSettings):
     # re-measuring before changing either default; this is not a permanent
     # verdict on either architecture, just what the current training data
     # supports today.
-    text_backend: str = Field("easyocr", description="Backend id for free-text fields")
+    text_backend: str = Field("ppocr_arabic", description="Backend id for free-text fields")
     digit_backend: str = Field("crnn_onnx_digits", description="Backend id for numeric fields")
     min_field_confidence: float = Field(0.40, description="Below this a field is reported but flagged low-confidence")
     upscale_small_crops_to: int = Field(64, description="Field crops shorter than this are upscaled before OCR")
-    # Looser / larger crops for easyocr names were tried and dropped: on the
-    # held-out cards, end to end, 10%/15% margins at 128px read 32 names vs 33
-    # with these crops, 40% margins read 29 (letters of the next line leak in).
+    # Top/bottom margin of a name crop. 6% cut off the dots of «ژ» (read
+    # «اله» for «ژاله»); 15% keeps them without reaching the next line (40%
+    # did, for easyocr). Digit crops keep field_crop_padding: their CRNN was
+    # trained on those.
+    text_crop_padding_y: float = Field(0.15, description="Top/bottom margin of a name crop, fraction of box height")
 
     # --- closed-vocabulary names (lexicon/) ---------------------------
     # First and father's names are matched against a list of given names; a
     # read that matches none is kept but sent to review (lexicon/__init__.py).
     name_lexicon: bool = True
-    # The CRNN that scores every listed name against the crop (CTC).
-    lexicon_scorer_backend: str = "crnn_onnx"
+    # The recogniser that scores every listed name against the crop (CTC).
+    # With a scorer, an unmatched read goes to review; the rougher
+    # nearest-spelling fallback is used only when no scorer can be loaded.
+    lexicon_scorer_backend: str = "ppocr_arabic"
     # CTC log-probability floor, and lead over the runner-up, for a list match.
     # Picked on eval_text.tsv: no listed name was accepted wrong at -6 / 5.
     lexicon_min_score: float = -6.0

@@ -94,12 +94,15 @@ def to_gray(img: np.ndarray) -> np.ndarray:
     return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
 
-def crop_with_padding(img: np.ndarray, box: tuple[int, int, int, int], pad_ratio: float) -> np.ndarray:
-    """Crop x1,y1,x2,y2 with a relative margin, clamped to the image bounds."""
+def crop_with_padding(
+    img: np.ndarray, box: tuple[int, int, int, int], pad_ratio: float, pad_ratio_y: float | None = None
+) -> np.ndarray:
+    """Crop x1,y1,x2,y2 with a relative margin (`pad_ratio_y` for top and
+    bottom when given), clamped to the image bounds."""
     h, w = img.shape[:2]
     x1, y1, x2, y2 = box
     pad_x = int(round((x2 - x1) * pad_ratio))
-    pad_y = int(round((y2 - y1) * pad_ratio))
+    pad_y = int(round((y2 - y1) * (pad_ratio if pad_ratio_y is None else pad_ratio_y)))
     x1 = max(0, x1 - pad_x)
     y1 = max(0, y1 - pad_y)
     x2 = min(w, x2 + pad_x)

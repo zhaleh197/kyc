@@ -19,7 +19,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from kyc.core.config import get_settings  # noqa: E402
 from kyc.modules.ocr.profiles import list_profiles  # noqa: E402
-from kyc.modules.ocr.recognizers import CRNN_ARTIFACTS  # noqa: E402
+from kyc.modules.ocr.recognizers import CRNN_ARTIFACTS, PPOCR_ARTIFACTS  # noqa: E402
 
 
 def sha256(path: Path) -> str:
@@ -90,10 +90,14 @@ def main() -> int:
             symbols = [s for s in charset_path.read_text(encoding="utf-8").splitlines() if s]
             print(f"    charset: {len(symbols)} symbols (+1 CTC blank)")
 
-    active = {settings.ocr.text_backend, settings.ocr.digit_backend}
+    for backend_id, model_file in PPOCR_ARTIFACTS.items():
+        print(f"  {backend_id}")
+        print(f"    {model_file:<28} {describe(settings.model_path(model_file))}")
+
+    active = {settings.ocr.text_backend, settings.ocr.digit_backend, settings.ocr.lexicon_scorer_backend}
     print(f"\nactive backends: text={settings.ocr.text_backend} digits={settings.ocr.digit_backend}")
-    for backend_id in active & set(CRNN_ARTIFACTS):
-        model_file, charset_file = CRNN_ARTIFACTS[backend_id]
+    for backend_id in active & (set(CRNN_ARTIFACTS) | set(PPOCR_ARTIFACTS)):
+        model_file = PPOCR_ARTIFACTS.get(backend_id) or CRNN_ARTIFACTS[backend_id][0]
         if not settings.model_path(model_file).exists():
             print(f"  ERROR {backend_id} is selected but {model_file} is missing")
             problems += 1

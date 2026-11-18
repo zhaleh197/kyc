@@ -24,6 +24,10 @@ CRNN_ARTIFACTS = {
     "crnn_onnx": ("crnn_fa_text.onnx", "crnn_fa_text.charset.txt"),
     "crnn_onnx_digits": ("crnn_fa_digits.onnx", "crnn_fa_digits.charset.txt"),
 }
+# PaddleOCR recognisers converted to ONNX; the charset is inside the model.
+PPOCR_ARTIFACTS = {
+    "ppocr_arabic": "ppocr_arabic_v5_rec.onnx",
+}
 
 
 def get_recognizer(backend_id: str, settings: Settings) -> TextRecognizer:
@@ -53,7 +57,14 @@ def _build(backend_id: str, settings: Settings) -> TextRecognizer:
             name=backend_id,
         )
 
-    known = ", ".join(["easyocr", *CRNN_ARTIFACTS])
+    if backend_id in PPOCR_ARTIFACTS:
+        from .ppocr_onnx import PpOcrRecognizer
+
+        return PpOcrRecognizer.load(
+            settings.model_path(PPOCR_ARTIFACTS[backend_id]), settings.onnx_providers, name=backend_id
+        )
+
+    known = ", ".join(["easyocr", *CRNN_ARTIFACTS, *PPOCR_ARTIFACTS])
     raise BackendNotInstalled(f"Unknown recognition backend {backend_id!r}. Known backends: {known}")
 
 
@@ -63,4 +74,4 @@ def reset_cache() -> None:
         _cache.clear()
 
 
-__all__ = ["Recognition", "TextRecognizer", "get_recognizer", "reset_cache", "CRNN_ARTIFACTS"]
+__all__ = ["Recognition", "TextRecognizer", "get_recognizer", "reset_cache", "CRNN_ARTIFACTS", "PPOCR_ARTIFACTS"]

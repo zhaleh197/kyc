@@ -170,12 +170,18 @@ The OCR module needs `ir_national_card_front_fields.onnx` to run. Without it,
 requests return `503 model_not_available` naming the missing file — a service
 that silently stops reading a field is worse than one that refuses.
 
-Text recognition ships with two backends, and the defaults are mixed based on
-measurement, not architecture:
+Text recognition ships with three backends, and the defaults are mixed based
+on measurement, not architecture:
 
-- `easyocr` — pretrained, no training needed, ~1–2 s per card on CPU. Still
-  the default for names: on this project's held-out eval set it beats the
-  fine-tuned CRNN (57.1% vs 38.8% exact-match).
+- `ppocr_arabic` — PaddleOCR's PP-OCRv5 Arabic-script recogniser, run as ONNX
+  (`models/ppocr_arabic_v5_rec.onnx`, converted by RapidOCR; no paddle
+  install). The default for names: on 14 real card photos it read 38 of 42
+  names with the name list, against 24 for easyocr. It reads «گ» as «ک» and
+  «ژ» as «ز»; first and father's names are repaired by the name list
+  (`kyc/modules/ocr/lexicon/`), last names are not. A first or father's name
+  that matches no listed name goes to review instead of being accepted.
+- `easyocr` — pretrained, no training needed, ~1–2 s per card on CPU. The
+  previous names default.
 - `crnn_onnx` / `crnn_onnx_digits` — fine-tuned from EasyOCR's own pretrained
   Arabic-script weights (see `training/kaggle/README.md`) rather than trained
   from scratch. `crnn_onnx_digits` is the default for national id and dates:
@@ -210,7 +216,8 @@ kyc/
     pipeline.py    orchestration
     rectify.py     card localisation, perspective, quality gate
     detector.py    ONNX YOLO runner (CPU)
-    recognizers/   easyocr and CRNN-ONNX backends
+    recognizers/   PaddleOCR-ONNX, easyocr and CRNN-ONNX backends
+    lexicon/       given-name list for first / father's name
     normalize.py   Persian/Arabic text folding
     validators.py  national code, Jalali calendar
     profiles/      per-country field definitions and rules

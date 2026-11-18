@@ -123,6 +123,35 @@ artifacts:
     sha256: 8adf256f1d264b3d9784636cc7fa7efeda6139f0aa59165e4fd1bc031e778444
     exported_at: "2026-09-14"
 
+  - name: ppocr_arabic_v5_rec.onnx
+    module: ocr
+    task: Persian/Arabic text line recognition (first/last/father name)
+    trained_by: >
+      Not trained here. PaddleOCR's arabic_PP-OCRv5_rec_mobile, converted to
+      ONNX by the RapidOCR project. Character list is in the model metadata
+      ("character"). Served by kyc/modules/ocr/recognizers/ppocr_onnx.py, which
+      reproduces rapidocr's preprocessing and decoding (identical output on
+      40/40 real field crops) without importing paddle or rapidocr.
+    source: https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/onnx/PP-OCRv5/rec/arabic_PP-OCRv5_rec_mobile.onnx
+    license: Apache-2.0 (PaddleOCR; RapidOCR conversion)
+    sha256: c1192e632d0baa9146ae5b756a0e635e3dc63c1733737ebfd1629e87144e9295
+    added_at: "2026-11-19"
+    metrics:
+      note: >
+        14 real card photos (.data/id_cards_real, 6 people, Telegram-compressed,
+        hand-labelled in .data/tmp/real_labels.tsv), full pipeline end to end.
+      names_right: 38/42            # easyocr (previous default) 24/42
+      names_wrong_but_accepted: 2   # both «گویلی» read «کویلی» (last name, no list)
+      names_not_located: 2          # field detector found no box
+      digits_right: 42/42           # crnn_onnx_digits, unchanged
+      held_out_eval_text: 34/39 right, 1 wrong-but-accepted (easyocr + list 33, 3)
+      seconds_per_card_cpu: 3.2     # whole pipeline, i5-3570
+    known_limitations: >
+      Trained on Arabic: Persian-only letters are read as their Arabic base
+      («گ»->«ک», «ژ»->«ز», sometimes «پ»/«چ»). The name list folds these for
+      first and father's names; last names keep the error. 14 photos is a small
+      set - measure on more real cards before trusting the numbers further.
+
   - name: crnn_fa_digits.onnx
     module: ocr
     task: digit and date line recognition (national id, birth/expiry date)

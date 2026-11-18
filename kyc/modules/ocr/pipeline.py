@@ -239,7 +239,8 @@ class DocumentOcrPipeline:
             result.box = list(detection.box)
             result.detection_confidence = round(detection.confidence, 4)
 
-            crop = crop_with_padding(card, detection.box, cfg.field_crop_padding)
+            pad_y = cfg.text_crop_padding_y if spec.kind is FieldKind.TEXT else None
+            crop = crop_with_padding(card, detection.box, cfg.field_crop_padding, pad_y)
             crop = upscale_to_height(crop, cfg.upscale_small_crops_to)
 
             backend_id = cfg.digit_backend if spec.kind in (FieldKind.DIGITS, FieldKind.DATE) else cfg.text_backend

@@ -5,9 +5,14 @@ given name, though, is one of a few thousand: the crop is scored against
 every name on the list and the read is accepted only when it lands on one.
 
     1. the recogniser's text is already a listed name     -> accept it
+       (also when it differs only in a letter the Arabic-script model cannot
+       tell apart - «ژ/ز», «گ/ک», «پ/ب», «چ/ج» - and only one name fits:
+       «زاله» -> «ژاله»)
     2. CTC: P(name | crop) under the CRNN, every listed name scored at once;
        accept the best one if it is confident and well clear of the runner-up
-    3. the text is a small edit away from one listed name -> accept that name
+    3. only when no scorer is available: the text is a small edit away from
+       one listed name -> accept that name. With a scorer this rule is off:
+       on the real cards it turned «اله» (for «ژاله») into «الهه».
     4. otherwise keep the raw read and send it to review
 
 End to end on the held-out cards (eval_text.tsv, 39 names located): names
@@ -33,6 +38,14 @@ def match_key(text: str) -> str:
     """Compound names are printed with a space, a ZWNJ or neither
     («امیر حسین», «امیرحسین»): compare the letters only."""
     return normalize_name(text or "").replace(" ", "").replace("‌", "")
+
+
+# Persian letters the Arabic-trained recogniser reads as their Arabic base.
+_PERSIAN_FOLD = str.maketrans("ژگپچ", "زکبج")
+
+
+def fold_key(text: str) -> str:
+    return match_key(text).translate(_PERSIAN_FOLD)
 
 
 @lru_cache(maxsize=8)
@@ -101,6 +114,9 @@ class NameMatcher:
     def __init__(self, names: tuple[str, ...], *, min_score: float, min_margin: float):
         self.names = names
         self.by_key = {match_key(n): n for n in names}
+        self.by_fold: dict[str, list[str]] = {}
+        for n in names:
+            self.by_fold.setdefault(fold_key(n), []).append(n)
         self.min_score = min_score
         self.min_margin = min_margin
         self._encoded: dict[int, tuple[list[str], list[list[int]]]] = {}
@@ -109,10 +125,12 @@ class NameMatcher:
         key = match_key(text)
         if key in self.by_key:
             return LexiconMatch(self.by_key[key], "exact")
+        folded = self.by_fold.get(fold_key(text), [])
+        if len(folded) == 1:
+            return LexiconMatch(folded[0], "exact")
         if log_probs is not None and charset is not None:
             found = self._by_ctc(log_probs, charset)
-            if found is not None:
-                return found
+            return found if found is not None else LexiconMatch(None, "none")
         if key:
             nearest = min(self.names, key=lambda n: edit_distance(key, match_key(n)))
             if edit_distance(key, match_key(nearest)) <= max(1, len(match_key(nearest)) // 3):

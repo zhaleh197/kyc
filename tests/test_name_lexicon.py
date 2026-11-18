@@ -94,3 +94,25 @@ def test_last_name_is_not_matched_against_given_names(relaxed_settings, good_val
     result = pipeline.run(photograph(make_card()))
     assert result.data["fields"]["last_name"]["lexicon_match"] is None
     assert result.data["fields"]["first_name"]["lexicon_match"] == "exact"
+
+
+def test_a_persian_letter_read_as_its_arabic_base_still_matches():
+    # The Arabic-script model reads «ژ» as «ز»: «زاله» is not a name, «ژاله» is.
+    match = matcher().resolve("زاله")
+    assert (match.value, match.method) == ("ژاله", "exact")
+
+
+def test_an_ambiguous_fold_is_not_guessed():
+    m = NameMatcher(("ژاله", "زاله"), min_score=-6.0, min_margin=5.0)
+    assert m.resolve("ژاله").value == "ژاله"  # exact wins
+    assert NameMatcher(("گلی", "کلی"), min_score=-6.0, min_margin=5.0).resolve("كلي").method == "exact"
+
+
+def test_with_a_scorer_a_near_miss_is_not_snapped():
+    # Real card: «ژاله» read «اله», snapped by spelling to «الهه» - a wrong
+    # name accepted. With a CTC scorer the spelling fallback is off.
+    charset = ["<blank>", "ا", "ل", "ه", "ژ"]
+    log_probs = np.log(np.full((8, len(charset)), 1 / len(charset)))  # frames that support nothing
+    m = NameMatcher(("الهه", "ژاله"), min_score=-6.0, min_margin=5.0)
+    assert m.resolve("اله", log_probs, charset).value is None
+    assert m.resolve("اله").value == "الهه"  # no scorer: the fallback still applies

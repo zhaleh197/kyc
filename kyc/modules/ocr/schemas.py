@@ -27,7 +27,7 @@ class FieldResult(BaseModel):
     detection_confidence: float | None = None
     backend: str | None = None
     lexicon_match: str | None = Field(
-        None, description="exact | ctc | nearest: how the value was matched to the name list; none: no match (review)"
+        None, description="exact | ctc | nearest: how the value was matched to the name list; none: no match (review)",
     )
 
 
