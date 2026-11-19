@@ -104,25 +104,32 @@ class FaceCapturePipeline:
             clear_logit = self._model("occlusion").clear_logit(image, faces[0])
         return quality.assess(image, faces, landmarks, cfg, clear_logit, session_modes)
 
-    def check(self, image: np.ndarray) -> ModuleResult:
-        """Stateless single-image check (back-office use). Never yields a capture_id."""
+    def check(self, image: np.ndarray, check_modes: dict[str, str] | None = None) -> ModuleResult:
+        """Stateless single-image check (back-office use). Never yields a
+        capture_id. `check_modes` as for `start` (debug only)."""
+        self.validate_modes(check_modes)
         with Timer() as timer:
-            a = self.assess(image)
+            a = self.assess(image, check_modes)
             score = quality.quality_score(a.metrics, self.settings.face_quality) if a.face else 0.0
             data = {"metrics": a.metrics, "face_box": _box(a.face), "landmarks_5": _kps(a.face)}
         return _envelope(_decision(a.reasons), score, a.reasons, data, timer)
 
     # ---------------------------------------------------------------- sessions
 
-    def start(self, check_modes: dict[str, str] | None = None) -> CaptureSession:
-        """`check_modes` (dev page) is honoured only with KYC_DEBUG=true:
-        checks a client can relax would protect nothing."""
+    def validate_modes(self, check_modes: dict[str, str] | None) -> dict[str, str]:
+        """The modes a request may use: per-request `check_modes` (dev and
+        demo pages) are honoured only with KYC_DEBUG=true - checks a client
+        can relax would protect nothing. Returns the resolved modes."""
         if check_modes and not self.settings.debug:
             raise ChecksLocked("Check modes can only be changed per session in debug mode")
         try:
-            quality.resolve_modes(self.settings.face_quality.check_modes, check_modes)
+            return quality.resolve_modes(self.settings.face_quality.check_modes, check_modes)
         except ValueError as exc:
             raise InvalidInput(str(exc), details={"known": sorted(quality.CHECK_GROUPS)}) from exc
+
+    def start(self, check_modes: dict[str, str] | None = None) -> CaptureSession:
+        """`check_modes` as for `validate_modes` (debug only)."""
+        self.validate_modes(check_modes)
         return self.store.create(check_modes)
 
     def submit_frame(self, session_id: str, image: np.ndarray) -> dict:

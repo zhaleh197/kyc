@@ -6,6 +6,8 @@ frame, so no model weights and no real person's photo are needed.
 
 from __future__ import annotations
 
+import json
+
 import time
 
 import cv2
@@ -661,6 +663,37 @@ def test_api_session_options_are_refused_outside_debug(client):
     r = client.post("/v1/face-capture/sessions", json={"check_modes": {"gaze": "off"}})
     assert r.status_code == 403 and r.json()["error"] == "checks_locked"
     assert client.post("/v1/face-capture/sessions").status_code == 201
+
+
+def _check(client, img, modes=None):
+    data = {"check_modes": json.dumps(modes)} if modes is not None else {}
+    return client.post("/v1/face-quality/check", files={"file": ("f.jpg", jpeg(img), "image/jpeg")}, data=data)
+
+
+def test_api_single_check_modes_are_refused_outside_debug(client):
+    r = _check(client, busy_background_frame(), {"background": "off"})
+    assert r.status_code == 403 and r.json()["error"] == "checks_locked"
+
+
+def test_api_single_check_honours_modes_in_debug(client):
+    pipeline = app.dependency_overrides[get_pipeline]()
+    pipeline.settings.debug = True
+    busy = busy_background_frame()
+    assert "background_not_uniform" in {r["code"] for r in _check(client, busy).json()["reasons"]}
+    body = _check(client, busy, {"background": "off"}).json()
+    assert "background_not_uniform" not in {r["code"] for r in body["reasons"]}
+    assert _check(client, busy, {"no_such_check": "off"}).status_code == 400
+    assert _check(client, busy, ["background"]).status_code == 400
+
+
+def test_api_lists_check_modes(client):
+    pipeline = app.dependency_overrides[get_pipeline]()
+    body = client.get("/v1/face-quality/check-modes").json()
+    assert body["adjustable"] is False
+    assert body["modes"]["background"] == "block" and body["modes"]["even_lighting"] == "info"
+    assert body["groups"]["background"] == ["background_not_uniform"]
+    pipeline.settings.debug = True
+    assert client.get("/v1/face-quality/check-modes").json()["adjustable"] is True
 
 
 

@@ -10,13 +10,17 @@ never produces a capture_id, so its output cannot reach face match.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+import json
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
 from kyc.core.config import get_settings
+from kyc.core.errors import InvalidInput
 from kyc.core.imaging import decode_base64_image, decode_image
 from kyc.core.schemas import ModuleResult
 
+from . import quality
 from .pipeline import FaceCapturePipeline
 
 router = APIRouter(tags=["face-capture"])
@@ -107,11 +111,42 @@ def session_result(
 @router.post("/v1/face-quality/check", response_model=ModuleResult, summary="Judge one image (no capture)")
 async def check_image(
     file: UploadFile = File(...),
+    check_modes: str | None = Form(
+        None, description='Debug only: JSON {"group": "off" | "info" | "block"}; refused (403) otherwise'
+    ),
     pipeline: FaceCapturePipeline = Depends(get_pipeline),
 ) -> ModuleResult:
+    modes = _parse_modes(check_modes)
     data = await file.read()
     _guard_size(len(data))
-    return pipeline.check(decode_image(data))
+    return pipeline.check(decode_image(data), modes)
+
+
+class CheckModes(BaseModel):
+    adjustable: bool  # per-request check_modes are honoured (KYC_DEBUG=true)
+    modes: dict[str, str]  # each group's mode on this server
+    groups: dict[str, list[str]]  # group -> reason codes it produces
+
+
+@router.get("/v1/face-quality/check-modes", response_model=CheckModes, summary="The selfie checks and their modes")
+def check_modes(pipeline: FaceCapturePipeline = Depends(get_pipeline)) -> CheckModes:
+    return CheckModes(
+        adjustable=pipeline.settings.debug,
+        modes=pipeline.validate_modes(None),
+        groups={g: list(codes) for g, codes in quality.CHECK_GROUPS.items()},
+    )
+
+
+def _parse_modes(raw: str | None) -> dict[str, str] | None:
+    if not raw:
+        return None
+    try:
+        modes = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise InvalidInput("check_modes is not valid JSON") from exc
+    if not isinstance(modes, dict) or not all(isinstance(v, str) for v in modes.values()):
+        raise InvalidInput('check_modes must be a JSON object of {"group": "off" | "info" | "block"}')
+    return modes
 
 
 def _guard_size(size: int) -> None:
