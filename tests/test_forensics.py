@@ -113,10 +113,38 @@ def test_each_region_can_be_switched_off(calib):
     assert "forensics_no_regions" in {r.code for r in out.reasons}
 
 
-def test_without_calibration_nothing_is_judged():
-    out = pipeline({}).run(jpeg_bytes(card()), {"portrait": list(BOX)})
-    assert out.decision is Decision.PASS
-    assert [r.code for r in out.reasons] == ["forensics_not_calibrated"]
+def test_without_calibration_it_refuses_instead_of_passing():
+    # An edited card once "passed" here: with no genuine reference nothing is
+    # checked, so the only honest answer is "not available".
+    from kyc.core.errors import ModelNotAvailable
+
+    with pytest.raises(ModelNotAvailable):
+        pipeline({}).run(jpeg_bytes(pasted(card())), {"portrait": list(BOX)})
+
+
+def test_api_without_calibration_is_503():
+    from fastapi.testclient import TestClient
+
+    from kyc.api.app import app
+    from kyc.modules.forensics.router import get_pipeline as get_forensics
+
+    app.dependency_overrides[get_forensics] = lambda: pipeline({})
+    try:
+        r = TestClient(app).post("/v1/forensics/document", files={"file": ("c.jpg", jpeg_bytes(card()), "image/jpeg")})
+    finally:
+        app.dependency_overrides.clear()
+    assert r.status_code == 503 and r.json()["error"] == "model_not_available"
+
+
+def test_a_case_skips_uncalibrated_forensics():
+    from kyc.core.config import Settings
+    from kyc.modules.orchestrator import router as case_router
+
+    case_router.forensics_pipeline, saved = (lambda: pipeline({})), case_router.forensics_pipeline
+    try:
+        assert case_router._forensics(Settings()) is None
+    finally:
+        case_router.forensics_pipeline = saved
 
 
 def test_editor_metadata_is_an_info_note_only(calib):

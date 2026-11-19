@@ -36,6 +36,7 @@ async def check_document(
     ocr: DocumentOcrPipeline = Depends(get_ocr_pipeline),
     pipeline: DocumentForensicsPipeline = Depends(get_pipeline),
 ) -> ModuleResult:
+    pipeline.require_calibration()  # before the OCR: refuse fast, never "pass" unchecked
     data = await file.read()
     _guard_size(len(data))
     read = ocr.run_bytes(data, profile)

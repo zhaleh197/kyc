@@ -18,6 +18,7 @@ from __future__ import annotations
 import io
 
 from kyc.core.config import Settings, get_settings
+from kyc.core.errors import ModelNotAvailable
 from kyc.core.imaging import decode_image
 from kyc.core.schemas import Decision, ModuleResult, Reason, Timer
 
@@ -59,6 +60,18 @@ class DocumentForensicsPipeline:
             self._calibration = calib_mod.load(path) or {}
         return self._calibration or None
 
+    def require_calibration(self) -> dict:
+        """The genuine-card reference, or 503. Without it no pixel check can
+        run, and answering "pass" would vouch for any card, edited or not."""
+        calib = self.calibration
+        if calib is None:
+            raise ModelNotAvailable(
+                f"Forensics is not calibrated: {self.settings.forensics.calibration_file} is missing "
+                "(made by scripts/calibrate_forensics.py from genuine card photos, specs/06-ai-forensics.md)",
+                details={"file": self.settings.forensics.calibration_file},
+            )
+        return calib
+
     def run(self, data: bytes, boxes: dict[str, list[int] | None]) -> ModuleResult:
         """`boxes`: region -> [x1, y1, x2, y2] on the photo exactly as submitted."""
         cfg = self.settings.forensics
@@ -70,33 +83,29 @@ class DocumentForensicsPipeline:
                     "editing_software_metadata", f"The photo's metadata names an editor: {software}",
                     f"در اطلاعات فایل نام نرم‌افزار ویرایش عکس آمده است: {software}",
                 ))
-            calib = self.calibration
-            if calib is None:
-                reasons.append(Reason.info("forensics_not_calibrated", "No calibration file; pixel checks skipped",
-                                           "فایل کالیبراسیون نیست؛ بررسی تصویر انجام نشد"))
-            else:
-                image = decode_image(data)
-                maps = PhotoMaps(image, calib.get("ela_quality", 90))
-                for region, ref in calib["regions"].items():
-                    box = boxes.get(region)
-                    if region not in cfg.regions or not box:
-                        continue
-                    if region == calib_mod.CARD:
-                        feats = card_features(image, box)
-                        cells = [feats] if feats else None
-                    else:
-                        cells = maps.features(box, ref["cells"])
-                    if cells is None:
-                        continue
-                    score, feature = calib_mod.region_score(calib, region, cells)
-                    score /= cfg.limit_scale
-                    signals.append({
-                        "name": region, "score": round(score, 3), "feature": feature, "region": list(box),
-                        "deviations": {k: round(v, 2) for k, v in calib_mod.deviations(calib, region, cells).items()},
-                    })
-                    if score >= 1.0:
-                        reasons.append(self._finding(region, feature, score))
-            if calib is not None and not signals:
+            calib = self.require_calibration()
+            image = decode_image(data)
+            maps = PhotoMaps(image, calib.get("ela_quality", 90))
+            for region, ref in calib["regions"].items():
+                box = boxes.get(region)
+                if region not in cfg.regions or not box:
+                    continue
+                if region == calib_mod.CARD:
+                    feats = card_features(image, box)
+                    cells = [feats] if feats else None
+                else:
+                    cells = maps.features(box, ref["cells"])
+                if cells is None:
+                    continue
+                score, feature = calib_mod.region_score(calib, region, cells)
+                score /= cfg.limit_scale
+                signals.append({
+                    "name": region, "score": round(score, 3), "feature": feature, "region": list(box),
+                    "deviations": {k: round(v, 2) for k, v in calib_mod.deviations(calib, region, cells).items()},
+                })
+                if score >= 1.0:
+                    reasons.append(self._finding(region, feature, score))
+            if not signals:
                 reasons.append(Reason.info("forensics_no_regions", "No card region could be checked",
                                            "هیچ ناحیه‌ای از کارت قابل بررسی نبود"))
 
@@ -107,7 +116,7 @@ class DocumentForensicsPipeline:
             # 1.0 = nothing unusual; 0.5 = exactly at a warning line.
             score=round(max(0.0, min(1.0, 1.0 - worst / 2)), 4),
             reasons=reasons,
-            data={"signals": signals, "calibration_version": (calib or {}).get("version")},
+            data={"signals": signals, "calibration_version": calib.get("version")},
             elapsed_ms=round(timer.ms, 2),
         )
 

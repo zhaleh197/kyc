@@ -13,6 +13,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
@@ -30,6 +32,8 @@ from kyc.modules.ocr.router import get_pipeline as ocr_pipeline
 from .archive import build_archive
 from .service import CaseService
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/v1/cases", tags=["cases"])
 
 _service: CaseService | None = None
@@ -42,9 +46,23 @@ def get_service() -> CaseService:
         _service = CaseService(
             settings, ocr=ocr_pipeline(), capture=capture_pipeline(), antispoof=antispoof_pipeline(),
             face_match=match_pipeline(), liveness=liveness_pipeline(), archive=build_archive(settings),
-            forensics=forensics_pipeline() if settings.forensics.enabled else None,
+            forensics=_forensics(settings),
         )
     return _service
+
+
+def _forensics(settings):
+    """The forensics step, or None (not run) when switched off or not
+    calibrated: an uncalibrated check judges nothing, and must neither pass a
+    case nor send every case to review."""
+    if not settings.forensics.enabled:
+        return None
+    pipeline = forensics_pipeline()
+    if pipeline.calibration is None:
+        logger.warning("forensics is enabled but not calibrated (%s missing): the step is skipped",
+                       settings.forensics.calibration_file)
+        return None
+    return pipeline
 
 
 @router.post("", status_code=201, summary="Open a verification case")
