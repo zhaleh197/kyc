@@ -227,6 +227,51 @@ held-out `test_` split (`models/manifest.yaml`):
 
 Re-measure before changing either default.
 
+## 2b. PaddleOCR name recogniser (Persian + Sorani)
+
+The service reads names with PaddleOCR's PP-OCRv5 Arabic model
+(`ppocr_arabic`). It was trained on Arabic, so it misreads the Persian-only
+letters «گ ژ پ چ» and cannot read Sorani at all. This folder fine-tunes that
+model on synthetic Persian + Sorani lines and brings it back as
+`ppocr_fa_ckb`.
+
+| step | where | what |
+|---|---|---|
+| 1 | here | `python -m training.ocr_synth.make_lines --out .data/ocr_synth --count 200000` |
+| 2 | here | `python -m training.kaggle.pack_dataset` -> `.data/kaggle_upload/kyc-ocr-synth-fa-ckb.zip` |
+| 3 | kaggle.com | *Datasets -> New dataset*, upload the zip, name it `kyc-ocr-synth-fa-ckb`, keep it **private** |
+| 4 | kaggle.com | *Code -> New notebook -> File -> Import* `finetune_ppocr_fa_ckb.ipynb`; Accelerator **GPU T4**, Internet **on**, *Add input* the dataset; *Save Version -> Save & Run All* (3-5 h) |
+| 5 | kaggle.com | from the version's *Output*, download `ppocr_fa_ckb_rec.onnx` and `results.json` |
+| 6 | here | put the model in `models/`, run `python -m training.kaggle.compare_on_real_cards` |
+| 7 | here | if it wins: `KYC_OCR__TEXT_BACKEND=ppocr_fa_ckb`, `KYC_OCR__LEXICON_SCORER_BACKEND=ppocr_fa_ckb`, and a `models/manifest.yaml` entry |
+
+Only synthetic images go to Kaggle. Real card photos stay on this machine.
+
+### What `finetune_ppocr_fa_ckb.ipynb` does
+
+1. Installs PaddlePaddle GPU and PaddleOCR (`release/3.7`).
+2. Checks that PaddleOCR's character list is the one inside the service's
+   current model (747 characters). The output layer is kept as it is: it
+   already has every Persian and Sorani letter.
+3. **Label direction.** The model emits right-to-left text in visual order
+   (as drawn, left to right). PaddleOCR's label encoder does not reverse
+   labels; only its decoder does, for dicts with "arabic" in the path. The
+   generator writes labels in reading order, so the notebook turns them round
+   (digit/Latin runs keep their direction). It checks this by encoding two
+   letters, not by trusting this note, and by scoring the base model before
+   training: with the wrong direction it would read almost nothing.
+4. Fine-tunes from `arabic_PP-OCRv5_mobile_rec_pretrained.pdparams`: 15
+   epochs, learning rate 2e-4 (base: 5e-4), batch 128, PaddleOCR's own
+   augmentation on top of the generator's.
+5. Exports base and fine-tuned weights to ONNX (paddle2onnx), writes the
+   character list into the metadata as `character` (what
+   `kyc/modules/ocr/recognizers/ppocr_onnx.py` reads), and scores both on the
+   validation lines the way the service runs them, per group: `fa`, `fa_gzpc`
+   (has «گ ژ پ چ»), `ckb` (has a Sorani-only letter).
+
+Synthetic validation lines only tell you the model learned the generator.
+Real cards decide: step 6.
+
 ## Bootstrapping the label set
 
 You do not need labelled crops on day one. The default `easyocr` backend runs

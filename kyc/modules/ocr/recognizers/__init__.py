@@ -27,6 +27,8 @@ CRNN_ARTIFACTS = {
 # PaddleOCR recognisers converted to ONNX; the charset is inside the model.
 PPOCR_ARTIFACTS = {
     "ppocr_arabic": "ppocr_arabic_v5_rec.onnx",
+    # The same model fine-tuned on Persian + Sorani lines (training/kaggle).
+    "ppocr_fa_ckb": "ppocr_fa_ckb_rec.onnx",
 }
 
 
