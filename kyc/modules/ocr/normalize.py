@@ -98,8 +98,11 @@ def keep_digits(text: str) -> str:
     return re.sub(r"\D", "", to_ascii_digits(strip_invisibles(text or "")))
 
 
-# Letters that may legitimately appear in a Persian personal name.
-_NAME_ALLOWED = re.compile("[^ء-غف-يٮ-ۓ‌ ]")
+# Letters that may legitimately appear in a Persian or Kurdish (Sorani)
+# personal name. U+066E-U+06D3 covers ڕ ڤ ڵ ۆ ێ; Sorani «ە» (U+06D5) sits
+# just past it, after the Arabic full stop (U+06D4), so it is listed alone -
+# without it «حەمە» came out as «ح م».
+_NAME_ALLOWED = re.compile("[^ء-غف-يٮ-ۓە‌ ]")
 
 
 def normalize_name(text: str) -> str:

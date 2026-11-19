@@ -28,6 +28,21 @@ def test_normalize_name_drops_diacritics_tatweel_and_digits():
     assert normalize.normalize_name("محمــدي  كريمي 123") == "محمدی کریمی"
 
 
+@pytest.mark.parametrize("name", ["حەمە", "ئەڵماس", "عەبدولڵا", "ڕێباز", "ڤیان", "ئاسۆ"])
+def test_sorani_names_keep_their_letters(name):
+    # Iraqi Kurdistan cards: «ە ڕ ێ ڵ ۆ ڤ» are letters, not noise.
+    assert normalize.normalize_name(name) == name
+
+
+def test_sorani_heh_is_folded_like_persian():
+    # «ھ» and «ه» are both used for /h/; names compare on one form.
+    assert normalize.normalize_name("ھۆگر") == "هۆگر"
+
+
+def test_arabic_full_stop_is_still_dropped_from_names():
+    assert normalize.normalize_name("حسن۔") == "حسن"
+
+
 def test_normalize_name_collapses_space_around_zwnj():
     assert normalize.normalize_text("نام‌ خانوادگی") == "نام‌خانوادگی"
 
