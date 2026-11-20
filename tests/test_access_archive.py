@@ -43,6 +43,27 @@ def test_v1_needs_a_valid_code(gated):
     assert gated.get("/health").status_code == 200  # health stays open
 
 
+def test_a_site_on_another_origin_can_use_the_gated_api(monkeypatch):
+    # The browser's preflight never carries the access code: it must be
+    # answered by CORS, not refused by the access gate.
+    site = "https://demo.example"
+    monkeypatch.setenv("KYC_REQUIRE_ACCESS", "true")
+    monkeypatch.setenv("KYC_ACCESS_CODES", '{"acme": "code-a"}')
+    monkeypatch.setenv("KYC_CORS_ORIGINS", f'["{site}"]')
+    get_settings.cache_clear()
+    try:
+        client = TestClient(create_app())
+    finally:
+        get_settings.cache_clear()
+    pre = client.options("/v1/access/whoami", headers={
+        "Origin": site, "Access-Control-Request-Method": "GET", "Access-Control-Request-Headers": "x-access-code"})
+    assert pre.status_code == 200 and pre.headers["access-control-allow-origin"] == site
+    denied = client.get("/v1/access/whoami", headers={"Origin": site})
+    assert denied.status_code == 401 and denied.headers["access-control-allow-origin"] == site
+    ok = client.get("/v1/access/whoami", headers={"Origin": site, "X-Access-Code": "code-a"})
+    assert ok.json() == {"customer": "acme"}
+
+
 def test_a_customer_cannot_see_another_customers_case(gated):
     a, b = {"X-Access-Code": "code-a"}, {"X-Access-Code": "code-b"}
     cid = gated.post("/v1/cases", headers=a).json()["case_id"]

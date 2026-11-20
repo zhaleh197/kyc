@@ -44,6 +44,10 @@ def create_app() -> FastAPI:
     # Empty origins means same-origin only. The prototypes this replaces all
     # shipped allow_origins=["*"], which is fine for a demo and wrong for a
     # service that receives identity documents.
+    access.install(app, settings)
+    # Added after the access gate, so it wraps it: a browser's preflight
+    # (which never carries the access code) is answered here instead of
+    # getting a 401, and a 401 still carries CORS headers the page can read.
     if settings.cors_origins:
         app.add_middleware(
             CORSMiddleware,
@@ -52,8 +56,6 @@ def create_app() -> FastAPI:
             allow_methods=["GET", "POST"],
             allow_headers=["*"],
         )
-
-    access.install(app, settings)
 
     @app.exception_handler(KycError)
     async def handle_kyc_error(_: Request, exc: KycError) -> JSONResponse:
