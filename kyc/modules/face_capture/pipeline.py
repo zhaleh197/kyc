@@ -45,7 +45,7 @@ class SessionNotFound(InvalidInput):
 
 
 class ChecksLocked(KycError):
-    """Switching checks off per session is a debug-only feature."""
+    """Switching checks off per session needs KYC_DEBUG or KYC_ADJUSTABLE_CHECKS."""
 
     code = "checks_locked"
     http_status = 403
@@ -118,9 +118,10 @@ class FaceCapturePipeline:
 
     def validate_modes(self, check_modes: dict[str, str] | None) -> dict[str, str]:
         """The modes a request may use: per-request `check_modes` (dev and
-        demo pages) are honoured only with KYC_DEBUG=true - checks a client
-        can relax would protect nothing. Returns the resolved modes."""
-        if check_modes and not self.settings.debug:
+        demo pages) are honoured only with KYC_DEBUG=true or
+        KYC_ADJUSTABLE_CHECKS=true (a public test demo) - checks a client can
+        relax would protect nothing. Returns the resolved modes."""
+        if check_modes and not self.settings.checks_adjustable:
             raise ChecksLocked("Check modes can only be changed per session in debug mode")
         try:
             return quality.resolve_modes(self.settings.face_quality.check_modes, check_modes)

@@ -436,6 +436,11 @@ class Settings(BaseSettings):
 
     app_name: str = "KYC API"
     debug: bool = False
+    # Lets clients relax the selfie checks per request (check_modes) without
+    # the rest of debug mode - for a public test demo where testers need to
+    # switch checks off. Never on a real deployment: a check the client can
+    # switch off protects nothing.
+    adjustable_checks: bool = False
 
     models_dir: Path = REPO_ROOT / "models"
     # Inference is CPU-only by design: models are trained on Kaggle GPUs,
@@ -445,6 +450,11 @@ class Settings(BaseSettings):
     onnx_intra_threads: int = 0  # 0 = let onnxruntime decide
 
     cors_origins: list[str] = Field(default_factory=list, description="Empty = same-origin only")
+
+    @property
+    def checks_adjustable(self) -> bool:
+        """Per-request check_modes are honoured (debug or adjustable_checks)."""
+        return self.debug or self.adjustable_checks
     max_upload_bytes: int = 12 * 1024 * 1024
 
     # --- hosted test service ---------------------------------------------

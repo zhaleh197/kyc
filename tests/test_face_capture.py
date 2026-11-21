@@ -7,7 +7,6 @@ frame, so no model weights and no real person's photo are needed.
 from __future__ import annotations
 
 import json
-
 import time
 
 import cv2
@@ -761,3 +760,15 @@ def test_shaking_during_the_video_is_caught_once_a_sharp_frame_was_seen():
         p.submit_frame(sid, textured_frame())
     fb = p.submit_frame(sid, textured_frame(blur=0.8))
     assert "face_blurry" in {h["code"] for h in fb["hints"]}
+
+
+def test_adjustable_checks_opens_check_modes_without_debug(client):
+    """A public test demo (KYC_ADJUSTABLE_CHECKS) lets testers switch checks
+    off without the rest of debug mode."""
+    pipeline = app.dependency_overrides[get_pipeline]()
+    assert pipeline.settings.debug is False
+    pipeline.settings.adjustable_checks = True
+    assert client.get("/v1/face-quality/check-modes").json()["adjustable"] is True
+    body = _check(client, busy_background_frame(), {"background": "off"}).json()
+    assert "background_not_uniform" not in {r["code"] for r in body["reasons"]}
+    assert pipeline.start({"background": "off"}).session_id  # a capture session accepts them too

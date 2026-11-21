@@ -1,7 +1,7 @@
 """Serve the KYC demo from this computer at a public HTTPS address (free).
 
     python -m scripts.public_demo [--tunnel ngrok|cloudflare] [--domain D] [--port 8080]
-                                  [--cors https://your-site.vercel.app]
+                                  [--cors https://your-site.vercel.app] [--adjustable-checks]
 
 Starts the API the way a public server must run - access codes on, debug
 off, one worker - on 127.0.0.1 only, then opens a tunnel to it and prints the
@@ -121,11 +121,17 @@ def main() -> None:
     p.add_argument("--domain", help="ngrok: your free fixed domain (xxx.ngrok-free.app)")
     p.add_argument("--port", type=int, default=8080)
     p.add_argument("--cors", nargs="*", default=[], help="Site origins allowed to call the API")
+    p.add_argument(
+        "--adjustable-checks",
+        action="store_true",
+        help="Let testers switch selfie checks off (KYC_ADJUSTABLE_CHECKS) - test demos only",
+    )
     args = p.parse_args()
 
     env = os.environ | {
         "KYC_REQUIRE_ACCESS": "true",
         "KYC_DEBUG": "false",
+        "KYC_ADJUSTABLE_CHECKS": "true" if args.adjustable_checks else "false",
         "KYC_ACCESS_CODES": json.dumps(access_codes()),
         "KYC_CORS_ORIGINS": json.dumps(args.cors),
     }

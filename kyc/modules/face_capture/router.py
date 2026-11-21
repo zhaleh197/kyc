@@ -123,7 +123,7 @@ async def check_image(
 
 
 class CheckModes(BaseModel):
-    adjustable: bool  # per-request check_modes are honoured (KYC_DEBUG=true)
+    adjustable: bool  # per-request check_modes are honoured (KYC_DEBUG / KYC_ADJUSTABLE_CHECKS)
     modes: dict[str, str]  # each group's mode on this server
     groups: dict[str, list[str]]  # group -> reason codes it produces
 
@@ -131,7 +131,7 @@ class CheckModes(BaseModel):
 @router.get("/v1/face-quality/check-modes", response_model=CheckModes, summary="The selfie checks and their modes")
 def check_modes(pipeline: FaceCapturePipeline = Depends(get_pipeline)) -> CheckModes:
     return CheckModes(
-        adjustable=pipeline.settings.debug,
+        adjustable=pipeline.settings.checks_adjustable,
         modes=pipeline.validate_modes(None),
         groups={g: list(codes) for g, codes in quality.CHECK_GROUPS.items()},
     )
