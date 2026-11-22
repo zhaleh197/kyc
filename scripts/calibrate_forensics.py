@@ -1,6 +1,6 @@
 """Calibrate and measure forensics (06) on real card photos.
 
-    python -m scripts.calibrate_forensics PHOTOS_DIR [--edited .data/ir_card_norm] [--write]
+    python -m scripts.calibrate_forensics PHOTOS_DIR [--edited .data/ir_card_norm] [--folds 5] [--write]
 
 PHOTOS_DIR holds one folder per kind; file names start with the card id
 (`c03-samsung-07.jpg` -> card c03):
@@ -11,20 +11,20 @@ PHOTOS_DIR holds one folder per kind; file names start with the card id
     print/       a printed copy of the card, photographed
 
 Everything is located by the OCR detector, which also gives the boxes on the
-photo as submitted. Cards are split into fit / held-out groups by card id, so
-a card's own photos never vouch for themselves. The genuine reference (median,
-spread, per-feature limits) is fitted on fit-group genuine + forwarded; then on
-held-out cards:
+photo as submitted. Cards are split into --folds groups by card id, and each
+group is tested by a reference fitted on the others (genuine + forwarded), so
+a card's own photos never vouch for themselves and every card is tested once:
 
     FPR    genuine and forwarded photos that warn (target <= 2%, spec 06 F1)
     TPR    screen / print photos flagged by the "card" (recapture) region
-    TPR    synthetic edits made from held-out genuine photos (portrait paste,
+    TPR    synthetic edits made from the tested genuine photos (portrait paste,
            digit swap, digit paste - see eval_forensics.py)
 
 With --edited, also the share of the hand-edited labelled set that warns per
 region - real human edits, but Roboflow resized and re-saved those files,
 which erases much of the trace (spec 06 section 12).
---write stores the reference in models/forensics_calibration.json.
+--write stores the reference fitted on every card in
+models/forensics_calibration.json.
 """
 
 from __future__ import annotations
@@ -87,12 +87,17 @@ def main() -> None:
     ap.add_argument("photos", type=Path)
     ap.add_argument("--edited", type=Path, default=None, help="hand-edited labelled set (yolo layout)")
     ap.add_argument("--fpr", type=float, default=0.02)
-    ap.add_argument("--holdout", type=float, default=0.3, help="share of card ids held out")
+    ap.add_argument("--folds", type=int, default=5, help="cross-validation folds, split by card id")
     ap.add_argument("--write", action="store_true")
     args = ap.parse_args()
     rng = random.Random(1405)
 
-    ocr = DocumentOcrPipeline(get_settings())
+    # The OCR boxes are the slow part, and the OCR models the large one: they
+    # are kept next to the photos, so a rerun (another --fpr, a changed
+    # fit) does not load OCR at all. Keyed by name, size and mtime.
+    cache_file = args.photos / ".ocr_boxes.json"
+    cache = json.loads(cache_file.read_text(encoding="utf-8")) if cache_file.exists() else {}
+    ocr = None
     rows = []  # (kind, card, feats, path of a genuine photo, boxes) - photos reloaded on demand
     for kind, card, path in photos(args.photos):
         data = path.read_bytes()
@@ -100,62 +105,99 @@ def main() -> None:
         if img is None:
             print(f"skip (unreadable): {path}")
             continue
-        try:
-            boxes = ocr.run_bytes(data).data.get("source_boxes", {})
-        except KycError as exc:
-            print(f"skip ({exc.code}): {path}")
+        key = f"{path.relative_to(args.photos).as_posix()}|{len(data)}|{int(path.stat().st_mtime)}"
+        if key not in cache:
+            ocr = ocr or DocumentOcrPipeline(get_settings())
+            try:
+                cache[key] = ocr.run_bytes(data).data.get("source_boxes", {})
+            except KycError as exc:
+                cache[key] = {"skip": exc.code}
+            cache_file.write_text(json.dumps(cache), encoding="utf-8")
+        boxes = cache[key]
+        if "skip" in boxes:
+            print(f"skip ({boxes['skip']}): {path}")
             continue
         rows.append((kind, card, measure(img, boxes), path if kind == "genuine" else None, boxes))
         del img
         print(f"  {kind:9s} {path.name}: {sorted(rows[-1][2])}", flush=True)
 
     cards = sorted({c for k, c, *_ in rows if k == "genuine"})
-    if not cards:
-        raise SystemExit("no genuine photos found")
-    held = set(rng.sample(cards, max(1, round(len(cards) * args.holdout)))) if len(cards) >= 4 else set()
-    if not held:
-        print("WARNING: fewer than 4 cards - fitting and reporting on the same photos (optimistic)")
-    fit_rows = [f for k, c, f, *_ in rows if k in ("genuine", "forwarded") and (c not in held or not held)]
-    test = [row for row in rows if row[1] in held or not held]
+    if len(cards) < 4:
+        raise SystemExit("need genuine photos of at least 4 cards")
+    rng.shuffle(cards)
+    folds = [set(cards[i :: args.folds]) for i in range(args.folds)]
+    regions_to_fit = (*REGIONS, CARD)
 
-    calib = fit(fit_rows, args.fpr, (*REGIONS, CARD))
-    calib["ela_quality"] = 90
-    calib["measured_on"] = {"photos": str(args.photos), "cards": cards, "held_out_cards": sorted(held),
-                            "fit_photos": len(fit_rows)}
+    def fit_on(excluded: set) -> dict:
+        calib = fit([f for k, c, f, *_ in rows if k in ("genuine", "forwarded") and c not in excluded],
+                    args.fpr, regions_to_fit)
+        calib["ela_quality"] = 90
+        return calib
 
-    def warns(feats: dict, regions=None) -> bool:
+    def warns(calib: dict, feats: dict, regions=None) -> bool:
         return any(region_score(calib, r, feats[r])[0] >= 1 for r in (regions or calib["regions"]) if r in feats
                    and r in calib["regions"])
 
-    report: dict = {"fitted_regions": sorted(calib["regions"])}
-    for kind in KINDS:
-        sub = [f for k, _, f, *_ in test if k == kind]
-        if kind in ATTACKS:
-            report[kind] = {"tpr_card": rate([warns(f, [CARD]) for f in sub]), "tpr_any": rate([warns(f) for f in sub]),
-                            "n": len(sub)}
-        else:
-            report[kind] = {"fpr": rate([warns(f) for f in sub]), "n": len(sub)}
-            by_region = defaultdict(list)
-            for f in sub:
+    # Every card is tested once, by a reference fitted without it.
+    seen = defaultdict(list)            # kind -> warned?
+    seen_region = defaultdict(lambda: defaultdict(list))
+    attacks = defaultdict(lambda: defaultdict(list))
+    edits = defaultdict(list)
+    dev_genuine, dev_attack = [], defaultdict(list)
+    for held in folds:
+        calib = fit_on(held)
+        test = [row for row in rows if row[1] in held]
+        for kind, _, f, *_ in test:
+            if kind in ATTACKS:
+                attacks[kind]["card"].append(warns(calib, f, [CARD]))
+                attacks[kind]["any"].append(warns(calib, f))
+            else:
+                seen[kind].append(warns(calib, f))
                 for r in calib["regions"]:
                     if r in f:
-                        by_region[r].append(region_score(calib, r, f[r])[0] >= 1)
-            report[kind]["fpr_by_region"] = {r: rate(v) for r, v in by_region.items()}
+                        seen_region[kind][r].append(region_score(calib, r, f[r])[0] >= 1)
+            if CARD in calib["regions"] and CARD in f:
+                d = deviations(calib, CARD, f[CARD])
+                (dev_attack[kind] if kind in ATTACKS else dev_genuine).append(d)
+        # Synthetic edits on held-out genuine photos: donor = another held-out card.
+        genuine = [(c, p, b) for k, c, _, p, b in test if k == "genuine" and "portrait" in b and "national_id" in b]
+        for n, (_, path, b) in enumerate(genuine):
+            if len(genuine) < 2:
+                break
+            _, donor_path, db = genuine[(n + 1) % len(genuine)]
+            img = cv2.imdecode(np.fromfile(str(path), np.uint8), cv2.IMREAD_COLOR)
+            donor = cv2.imdecode(np.fromfile(str(donor_path), np.uint8), cv2.IMREAD_COLOR)
+            made = {"portrait_paste": paste_portrait(img, b, donor, db, rng), "digit_swap": swap_digits(img, b, rng),
+                    "digit_paste": paste_digit(img, b, donor, db, rng)}
+            for kind, edited in made.items():
+                f = measure(edited, b)
+                region = EDIT_REGION[kind]
+                if region in f and region in calib["regions"]:
+                    edits[kind].append(region_score(calib, region, f[region])[0] >= 1)
 
-    # Synthetic edits on held-out genuine photos: donor = another held-out card.
-    genuine = [(c, p, b) for k, c, _, p, b in test if k == "genuine" and "portrait" in b and "national_id" in b]
-    edits = defaultdict(list)
-    for n, (_, path, b) in enumerate(genuine):
-        _, donor_path, db = genuine[(n + 1) % len(genuine)]
-        img, donor = cv2.imread(str(path)), cv2.imread(str(donor_path))
-        made = {"portrait_paste": paste_portrait(img, b, donor, db, rng), "digit_swap": swap_digits(img, b, rng),
-                "digit_paste": paste_digit(img, b, donor, db, rng)}
-        for kind, edited in made.items():
-            f = measure(edited, b)
-            region = EDIT_REGION[kind]
-            if region in f and region in calib["regions"]:
-                edits[kind].append(region_score(calib, region, f[region])[0] >= 1)
+    report: dict = {"folds": args.folds, "cards": len(cards)}
+    for kind in KINDS:
+        if kind in ATTACKS:
+            report[kind] = {"tpr_card": rate(attacks[kind]["card"]), "tpr_any": rate(attacks[kind]["any"]),
+                            "n": len(attacks[kind]["any"])}
+        else:
+            report[kind] = {"fpr": rate(seen[kind]), "n": len(seen[kind]),
+                            "fpr_by_region": {r: rate(v) for r, v in seen_region[kind].items()}}
     report["synthetic_edits"] = {k: {"tpr": rate(v), "n": len(v)} for k, v in edits.items()}
+    # Which features carry the attacks (AUC of the deviation, card region).
+    for kind in ATTACKS:
+        a = dev_attack[kind]
+        if dev_genuine and a:
+            report[kind]["auc_by_feature"] = {
+                feat: round(float(np.mean(np.array([d[feat] for d in a])[:, None]
+                                          > np.array([d[feat] for d in dev_genuine])[None, :])), 3)
+                for feat in a[0]
+            }
+
+    # The reference that is stored: fitted on every card.
+    calib = fit_on(set())
+    calib["measured_on"] = {"photos": str(args.photos), "cards": len(cards), "fit_photos": calib.get("fit_photos")}
+    report["fitted_regions"] = sorted(calib["regions"])
 
     if args.edited:
         flagged = defaultdict(list)
@@ -171,17 +213,6 @@ def main() -> None:
                         flagged[r].append(region_score(calib, r, f[r])[0] >= 1)
         report["hand_edited_set_warn_rate"] = {r: {"rate": rate(v), "n": len(v)} for r, v in flagged.items()}
 
-    # Which features carry the attacks (AUC of the deviation, card region).
-    if CARD in calib["regions"]:
-        g = [deviations(calib, CARD, f[CARD]) for k, _, f, *_ in test if k in ("genuine", "forwarded") and CARD in f]
-        for kind in ATTACKS:
-            a = [deviations(calib, CARD, f[CARD]) for k, _, f, *_ in test if k == kind and CARD in f]
-            if g and a:
-                report[kind]["auc_by_feature"] = {
-                    feat: round(float(np.mean(np.array([d[feat] for d in a])[:, None]
-                                              > np.array([d[feat] for d in g])[None, :])), 3)
-                    for feat in calib["regions"][CARD]["median"]
-                }
     calib["held_out_report"] = report
     print(json.dumps(report, indent=2, ensure_ascii=False))
     if args.write:
