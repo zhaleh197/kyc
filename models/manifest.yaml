@@ -152,6 +152,69 @@ artifacts:
       first and father's names; last names keep the error. 14 photos is a small
       set - measure on more real cards before trusting the numbers further.
 
+  - name: iq_national_card_front_fields.onnx
+    module: ocr
+    profile: iq_national_card_front
+    task: field detection on the flattened (rectified) Kurdistan-region Iraqi card front
+    trained_by: >
+      training/kaggle/train_field_detector.py run locally on CPU (yolov8n,
+      imgsz 640, batch 8, 60 epochs, workers 0). Labels drawn by
+      training/krg_card/prelabel.py from CRAFT text-line boxes, values cut
+      before the colon (trim_colon), then checked by eye.
+    base_weights: yolov8n.pt
+    dataset: >
+      .data/krg_card_yolo - 84 train / 14 val flat card images, seed 1405.
+      SYNTHETIC: two templates (white, orange), one face, random typed names.
+      No real card photo has been seen by this model.
+    rectify: true            # profile.rectify; KYC_OCR_RECTIFY is not used for this card
+    sha256: f25e46b955ab83f8f783861e6c42343e773dc9943e4024fb48af275963f35c22
+    exported_at: "2026-11-22"
+    metrics:
+      val_map50: 0.995
+      val_map50_95: 0.889
+      # training/krg_card/evaluate.py, 30 name-labelled synthetic cards, each
+      # pasted on a dark background with a perspective tilt:
+      labelled_names_exact: 154/180          # first detector (colon inside boxes): 107/180
+      labelled_shapes: {national_id: 30/30, blood_group: 30/30, document_number: 29/30}
+      labelled_decisions: {pass: 27, review: 3}
+      roboflow_test_split_shapes: {national_id: 7/7 of 7/9 read, blood_group: 8/8, document_number: 8/8}
+    compared_with: >
+      A detector trained the same way on Roboflow first-zkb3c/kurdi-araocr-jafae
+      v2 (CC BY 4.0, 261 train images, classes remapped; no document_number
+      class) reached val mAP50-95 0.61 and read 62/180 names exactly with
+      rectify on (46/180 off); on its own test split, national id right
+      shape 4/7. Not kept. Both sets are the same synthetic cards, so this
+      compares labels, not generalisation.
+    known_limitations: >
+      Synthetic data only; measure on real phone photos of Kurdistan cards
+      before trusting any of these numbers. Wrong names are mostly the
+      father / grandfather / mother's-father rows.
+
+  - name: ppocr_fa_ckb_rec.onnx
+    module: ocr
+    task: Persian + Kurdish (Sorani) text line recognition (names) - backend ppocr_fa_ckb, not the default
+    trained_by: >
+      training/kaggle/finetune_ppocr_fa_ckb.ipynb: PP-OCRv5 arabic mobile rec
+      fine-tuned on 196k synthetic Persian / Sorani name lines (dataset
+      kyc-ocr-synth-fa-ckb), lr 2e-4, batch 48. The run hit Kaggle's 12 h
+      limit in epoch 10 of 12; best_accuracy (epoch 10, val acc 0.958) was
+      exported by training/kaggle/export_ppocr_fa_ckb.ipynb. Same character
+      list as ppocr_arabic, in the metadata ("character").
+    license: Apache-2.0 (PaddleOCR base weights)
+    sha256: 8936f153a90b7b56fe114b6b2383911ff6718307fad5e3ff67aa4a9505e4ffed
+    added_at: "2026-11-22"
+    metrics:
+      synthetic_val_letters: {fa: 99.1%, fa_gzpc: 96.8%, ckb: 96.3%}   # ppocr_arabic: 91.3%, 41.0%, 4.1%
+      ir_field_crops_letters: 362/513 (71%)     # ppocr_arabic 406/513 (79%) - worse
+      ckb_field_crops_letters: 141/156 (90%)    # ppocr_arabic 79/156 (51%); with a Kurdish letter 66/72 vs 5/72
+      real_ir_cards_names_right: 37/42          # ppocr_arabic 38/42; wrong-but-accepted 1 vs 2; review 4 vs 2
+    verdict: >
+      Not the default. Far better on Kurdish, but worse on real Iranian field
+      crops (71% vs 79%) and no better on the 14 labelled Iranian cards, so
+      ppocr_arabic stays for the Iranian card. Meant for a Kurdish / Iraqi
+      card profile; the synthetic lines evidently do not cover the look of
+      real Iranian crops well enough to replace the base model there.
+
   - name: crnn_fa_digits.onnx
     module: ocr
     task: digit and date line recognition (national id, birth/expiry date)

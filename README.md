@@ -106,8 +106,9 @@ Nothing in the pipeline mentions Iran. Country logic lives in one place:
 - `validators.py` — national-code check digit, Jalali calendar, expiry
 - `normalize.py` — Persian/Arabic digit and letter folding
 
-Adding the Iraqi national card means writing `profiles/iraq.py`, registering
-it, and training its detector. No pipeline change.
+- `profiles/iraq.py` — Iraqi (Kurdistan) card front: own detector, Sorani
+  name recogniser (`ppocr_fa_ckb`), Latin codes via `ppocr_arabic`; trained
+  and measured on synthetic cards only (`training/krg_card/`)
 
 Checks that run today:
 

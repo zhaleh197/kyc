@@ -36,6 +36,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--patience", type=int, default=25)
     parser.add_argument("--device", default="0", help="'0' for the Kaggle GPU, 'cpu' to smoke-test")
     parser.add_argument("--opset", type=int, default=12)
+    parser.add_argument("--workers", type=int, default=8, help="data loader workers; 0 on a small machine")
     parser.add_argument("--out", default=str(REPO_ROOT / "models"), help="Where to copy the exported model")
     parser.add_argument("--skip-class-check", action="store_true", help="Export even if class order disagrees")
     return parser.parse_args()
@@ -83,6 +84,7 @@ def main() -> None:
         batch=args.batch,
         patience=args.patience,
         device=args.device,
+        workers=args.workers,
         # No `project`: ultralytics resolves a relative project under its own
         # runs_dir and ends up with runs/detect/runs/<name>. Letting it use the
         # default gives the expected runs/detect/<name>.

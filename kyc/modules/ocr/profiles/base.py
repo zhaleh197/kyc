@@ -19,6 +19,7 @@ class FieldKind(str, Enum):
     TEXT = "text"          # Persian/Arabic free text -> normalize_name
     DIGITS = "digits"      # numeric only -> keep_digits
     DATE = "date"          # Jalali/Gregorian date -> normalize_date
+    CODE = "code"          # latin letters + digits (card number, blood group) -> normalize_code
     IMAGE = "image"        # portrait or signature crop, not OCR'd
     CONTAINER = "container"  # the card itself; used for rectification, not a value
 
@@ -56,6 +57,14 @@ class DocumentProfile:
     # card's orientation when it is photographed sideways or upside down.
     layout: tuple[tuple[str, str, str], ...] = ()
     aspect_ratio: float = 85.6 / 53.98
+    # Recogniser backends for this document; None = the configured default
+    # (settings.ocr.text_backend / digit_backend). digit_backend also reads
+    # dates and latin codes.
+    text_backend: str | None = None
+    digit_backend: str | None = None
+    # Flatten the card before detection; None = settings.ocr.rectify. Must
+    # match how the profile's detector was trained (whole photos or flat cards).
+    rectify: bool | None = None
     rectified_width: int = 1024
     validator: Callable[[dict], list[Reason]] | None = field(default=None, compare=False)
     # Optional post-processing that adds derived values (gregorian dates,

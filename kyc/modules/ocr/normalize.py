@@ -113,6 +113,21 @@ def normalize_name(text: str) -> str:
     return _WS.sub(" ", out).strip()
 
 
+_CODE_DROP = re.compile(r"[^A-Z0-9+-]")
+
+
+def normalize_code(text: str) -> str:
+    """A latin code such as a card number (L82931897) or a blood group (AB+):
+    upper case, Persian / Arabic digits folded to ASCII, everything else
+    dropped."""
+    code = _CODE_DROP.sub("", to_ascii_digits(strip_invisibles(text or "")).upper())
+    # A sign is a neutral character to the bidi reordering of an RTL-trained
+    # recogniser, so "AB+" comes out as "+AB". A code never starts with one.
+    if code[:1] in ("+", "-"):
+        code = code[1:] + code[0]
+    return code
+
+
 _DATE_SPLIT = re.compile(r"\D+")
 
 

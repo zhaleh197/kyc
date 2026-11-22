@@ -184,3 +184,17 @@ def test_rectify_flag_controls_the_geometry_the_detector_sees(good_values):
             assert seen["shape"] == scene.shape[:2], "unrectified run should hand over the original frame"
 
     assert FIELD_BOXES  # layout fixture is what the fake detector reports
+
+
+def test_a_bright_card_whose_fields_all_read_passes(relaxed_settings, good_values):
+    """The new card is nearly white: brightness alone is no reason to fail
+    or to send it to a person when every field reads."""
+    settings = relaxed_settings.model_copy(
+        update={"ocr": relaxed_settings.ocr.model_copy(update={"max_brightness": 200.0, "max_glare_ratio": 0.06})}
+    )
+    pipeline, _ = build(settings, good_values)
+    result = pipeline.run(make_card(background=252))
+    codes = {r.code: r.severity for r in result.reasons}
+    assert result.decision is Decision.PASS, codes
+    assert codes["card_too_bright"].value == "info"
+    assert result.data["values"]["national_id"] == "0012345679"

@@ -259,8 +259,11 @@ def assess_quality(
             )
         )
     elif metrics["brightness"] > max_brightness:
+        # Not fatal: the new card is nearly white, and a photo cropped to its
+        # edges has a mean of 220-245 while every field reads (20 of 61 real
+        # cards). Washed-out text shows up as unread / low-confidence fields.
         reasons.append(
-            Reason.error(
+            Reason.warn(
                 "card_too_bright",
                 f"Card is overexposed (brightness {metrics['brightness']})",
                 "تصویر کارت خیلی روشن است",

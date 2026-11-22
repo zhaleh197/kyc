@@ -6,9 +6,11 @@ from kyc.core.errors import ProfileNotFound
 
 from .base import DocumentProfile, FieldKind, FieldSpec
 from .iran import IR_NATIONAL_CARD_FRONT
+from .iraq import IQ_NATIONAL_CARD_FRONT
 
 _REGISTRY: dict[str, DocumentProfile] = {
     IR_NATIONAL_CARD_FRONT.id: IR_NATIONAL_CARD_FRONT,
+    IQ_NATIONAL_CARD_FRONT.id: IQ_NATIONAL_CARD_FRONT,
 }
 
 DEFAULT_PROFILE_ID = IR_NATIONAL_CARD_FRONT.id
@@ -28,7 +30,8 @@ def get_profile(profile_id: str | None) -> DocumentProfile:
 
 
 def list_profiles() -> list[DocumentProfile]:
-    return sorted(_REGISTRY.values(), key=lambda p: p.id)
+    """The default document type first (clients preselect the first), then by id."""
+    return sorted(_REGISTRY.values(), key=lambda p: (p.id != DEFAULT_PROFILE_ID, p.id))
 
 
 __all__ = [
@@ -36,6 +39,7 @@ __all__ = [
     "FieldKind",
     "FieldSpec",
     "IR_NATIONAL_CARD_FRONT",
+    "IQ_NATIONAL_CARD_FRONT",
     "DEFAULT_PROFILE_ID",
     "register",
     "get_profile",

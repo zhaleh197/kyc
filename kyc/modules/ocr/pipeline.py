@@ -37,7 +37,9 @@ MODULE_VERSION = "0.1.0"
 # Quality problems that make any downstream reading untrustworthy rather than
 # merely uncertain. Reading on would produce confident nonsense, which is the
 # worst possible failure mode for identity data.
-FATAL_QUALITY_CODES = {"card_blurry", "card_too_dark", "card_too_bright"}
+FATAL_QUALITY_CODES = {"card_blurry", "card_too_dark"}
+# Lighting findings that matter only if they cost a field (see run).
+LIGHTING_CODES = {"card_too_bright", "card_glare"}
 
 
 DetectorFactory = Callable[[DocumentProfile], "FieldDetector"]
@@ -117,11 +119,15 @@ class DocumentOcrPipeline:
             ensure_min_size(image, cfg.min_image_side)
             source_size = (image.shape[1], image.shape[0])
             image = rectify.prepare(image, cfg.max_image_side)
-            # source photo -> the frame the boxes end up in (rectify=false only)
+            # source photo -> the frame the boxes end up in
             to_frame = rectify.scale_matrix(source_size, (image.shape[1], image.shape[0]))
 
-            if cfg.rectify:
-                card, rectify_reasons = rectify.rectify(image, profile.rectified_size, profile.aspect_ratio)
+            # Serve the geometry the profile's detector was trained on.
+            if cfg.rectify if profile.rectify is None else profile.rectify:
+                card, rectify_reasons, to_card = rectify.rectify_with_transform(
+                    image, profile.rectified_size, profile.aspect_ratio
+                )
+                to_frame = to_card @ to_frame
                 reasons += rectify_reasons
             else:
                 # The detector was trained on whole frames, so it must see one.
@@ -147,38 +153,32 @@ class DocumentOcrPipeline:
                 )
                 return self._envelope(Decision.FAIL, 0.0, reasons, empty, timer)
 
-            orientation = None
-            if cfg.auto_orient:
-                # Straighten a sideways / upside-down / tilted card before any
-                # field is cropped: a field cut from a sideways card holds
-                # vertical text the recognisers cannot read. Boxes, the
-                # portrait and `card_base64` all refer to the upright image.
-                detector = self._detector_factory(profile)  # one instance for every candidate turn
-                o = orient(card, lambda im: detector.detect(im, cfg.detector_conf, cfg.detector_iou), profile)
-                card, detections = o.image, o.detections
-                to_frame = o.matrix @ to_frame
-                orientation = {
-                    "rotation": o.rotation, "deskew_deg": o.deskew_deg, "layout_score": round(o.layout_score, 2)
-                }
-            else:
-                detections = self._detect(card, profile)
+            card, detections, to_frame, orientation = self._locate(card, profile, to_frame)
             located = best_per_class(detections)
 
             fields, field_reasons = self._read_fields(card, profile, located)
             reasons += field_reasons
             source_boxes = {}
-            if not cfg.rectify:
-                # Forensics (06) reads the submitted pixels: a downscale or a
-                # deskew resamples them and erases the traces it looks for.
-                back = np.linalg.inv(to_frame)
-                for spec in profile.fields:
-                    if spec.detector_class in located:
-                        mapped = _map_box(list(located[spec.detector_class].box), back, source_size)
-                        if mapped:
-                            source_boxes[spec.key] = mapped
+            # Forensics (06) reads the submitted pixels: a downscale, a deskew
+            # or a rectification resamples them and erases the traces it
+            # looks for, so the boxes are mapped back onto the photo.
+            back = np.linalg.inv(to_frame)
+            for spec in profile.fields:
+                if spec.detector_class in located:
+                    mapped = _map_box(list(located[spec.detector_class].box), back, source_size)
+                    if mapped:
+                        source_boxes[spec.key] = mapped
 
             values = {key: field.value for key, field in fields.items()}
             reasons += profile.validate(values)
+            if all(values.get(f.key) for f in profile.value_fields) and not any(
+                r.severity is not Severity.INFO for r in reasons if r.code not in LIGHTING_CODES
+            ):
+                # Every field read cleanly, so the light was good enough: a
+                # bright card or a shine away from the text is no reason for
+                # a person to look. Kept as info, with the metrics.
+                reasons = [Reason.info(r.code, r.message_en, r.message_fa, r.field) if r.code in LIGHTING_CODES
+                           else r for r in reasons]
 
             data = DocumentOcrData(
                 profile=profile.id,
@@ -199,6 +199,20 @@ class DocumentOcrPipeline:
         return self._envelope(decision, score, reasons, data, timer)
 
     # ------------------------------------------------------------------ stages
+
+    def _locate(self, card: np.ndarray, profile: DocumentProfile, to_frame: np.ndarray):
+        """(card, detections, source->card matrix, orientation info)."""
+        cfg = self.settings.ocr
+        if not cfg.auto_orient:
+            return card, self._detect(card, profile), to_frame, None
+        # Straighten a sideways / upside-down / tilted card before any field
+        # is cropped: a field cut from a sideways card holds vertical text the
+        # recognisers cannot read. Boxes, the portrait and `card_base64` all
+        # refer to the upright image.
+        detector = self._detector_factory(profile)  # one instance for every candidate turn
+        o = orient(card, lambda im: detector.detect(im, cfg.detector_conf, cfg.detector_iou), profile)
+        info = {"rotation": o.rotation, "deskew_deg": o.deskew_deg, "layout_score": round(o.layout_score, 2)}
+        return o.image, o.detections, o.matrix @ to_frame, info
 
     def _detect(self, card: np.ndarray, profile: DocumentProfile) -> list[Detection]:
         cfg = self.settings.ocr
@@ -243,7 +257,10 @@ class DocumentOcrPipeline:
             crop = crop_with_padding(card, detection.box, cfg.field_crop_padding, pad_y)
             crop = upscale_to_height(crop, cfg.upscale_small_crops_to)
 
-            backend_id = cfg.digit_backend if spec.kind in (FieldKind.DIGITS, FieldKind.DATE) else cfg.text_backend
+            if spec.kind in (FieldKind.DIGITS, FieldKind.DATE, FieldKind.CODE):
+                backend_id = profile.digit_backend or cfg.digit_backend
+            else:
+                backend_id = profile.text_backend or cfg.text_backend
             recognizer = self._recognizer_factory(backend_id)
             recognition = recognizer.recognize(crop, allowlist=spec.charset_hint)
 
@@ -253,18 +270,21 @@ class DocumentOcrPipeline:
             result.value = self._normalize(spec, recognition.text)
             result.low_confidence = recognition.confidence < cfg.min_field_confidence
             if spec.lexicon and cfg.name_lexicon:
-                reasons += self._match_lexicon(spec, result, crop)
+                reasons += self._match_lexicon(spec, result, crop, profile)
 
             reasons += self._field_findings(spec, result)
             results[spec.key] = result
 
         return results, reasons
 
-    def _match_lexicon(self, spec: FieldSpec, result: FieldResult, crop: np.ndarray) -> list[Reason]:
+    def _match_lexicon(
+        self, spec: FieldSpec, result: FieldResult, crop: np.ndarray, profile: DocumentProfile
+    ) -> list[Reason]:
         """Snap a closed-vocabulary field to its list, or flag it for review."""
         log_probs = charset = None
         try:
-            scorer = self._recognizer_factory(self.settings.ocr.lexicon_scorer_backend)
+            # A profile with its own text recogniser scores names with it too.
+            scorer = self._recognizer_factory(profile.text_backend or self.settings.ocr.lexicon_scorer_backend)
             if hasattr(scorer, "log_probs"):
                 log_probs, charset = scorer.log_probs(crop), scorer.charset
         except KycError:
@@ -315,6 +335,8 @@ class DocumentOcrPipeline:
             value = normalize.keep_digits(raw)
         elif spec.kind is FieldKind.DATE:
             value = normalize.normalize_date(raw)
+        elif spec.kind is FieldKind.CODE:
+            value = normalize.normalize_code(raw)
         else:
             value = normalize.normalize_name(raw)
         return value or None

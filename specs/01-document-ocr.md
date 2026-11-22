@@ -32,9 +32,13 @@ photo ─► ensure_min_size ─► downscale (max side) ─► [rectify, off] �
 ```
 
 - **Quality gate** — sharpness (Laplacian variance), brightness, glare ratio.
-  `card_blurry` / `card_too_dark` / `card_too_bright` are fatal: the module
-  returns `fail` without reading, because confident nonsense on an identity
-  document is the worst failure available.
+  `card_blurry` / `card_too_dark` are fatal: the module returns `fail`
+  without reading, because confident nonsense on an identity document is the
+  worst failure available. `card_too_bright` and glare are warnings, and
+  drop to info when every field still reads cleanly: the new card is nearly
+  white, and 20 of 61 real cards photographed cropped to their edges had a
+  mean luma of 220-245 (and 13-65% near-white pixels) with every field
+  readable - as a fatal finding it failed a third of genuine cards.
 - **Rectification is off** (`KYC_OCR_RECTIFY=false`). The classical contour
   rectifier found a card outline in only 12% of the training images (cards
   fill ~45% of frame, no clean border). The detector was therefore trained on
@@ -69,8 +73,8 @@ needs what the model emitted to tell a misread from a forgery.
 
 | code | sev | source |
 |---|---|---|
-| `card_blurry`, `card_too_dark`, `card_too_bright` | error (fatal) | quality gate |
-| glare finding | warn | quality gate |
+| `card_blurry`, `card_too_dark` | error (fatal) | quality gate |
+| `card_too_bright`, `card_glare` | warn; info when every field reads | quality gate |
 | `field_not_located` | error | detector found no box for a required field |
 | `field_low_confidence` | warn | recognition conf < `min_field_confidence` |
 | `field_length_mismatch` | warn | e.g. national id ≠ 10 chars |
@@ -221,3 +225,30 @@ fallback instead of being matched upside down.
 
 Not yet verified end-to-end with text reading on rotated cards: the machine
 ran out of memory (drive C: full) during that run.
+
+## 12. 2026-11-22 — Iraqi (Kurdistan) national card front
+
+Profile `iq_national_card_front` (`profiles/iraq.py`); data tooling in
+`training/krg_card/`. What it needed from the pipeline, all per profile:
+
+- `text_backend` / `digit_backend`: names go to `ppocr_fa_ckb`; the 12-digit
+  id, card number and blood group go to `ppocr_arabic` — the fa/ckb fine-tune
+  forgot Latin letters and digits.
+- `FieldKind.CODE` for Latin codes (`normalize_code`, which also turns a
+  bidi-reversed `+A` into `A+`).
+- `rectify`: this detector was trained on flat cards, so the card is
+  flattened first; source boxes are mapped back onto the photo either way.
+- PP-OCR allowlists now mask the CTC probabilities before argmax (an id read
+  in Arabic-Indic digits used to come out empty).
+
+Labels: value boxes must stop before the colon — with it, the recogniser
+read an extra ن / ب and exact names were 107/180; without it 154/180.
+
+Measured (synthetic cards, see `models/manifest.yaml`): 30/30 ids and blood
+groups right shape, 154/180 names exact, 27 pass / 3 review. A detector
+trained on the Roboflow Kurdish set did worse (62/180) and was not kept.
+
+**Not verified on real cards.** All training and test images are synthetic
+(two templates, one face). Before relying on it, collect real phone photos
+of Kurdistan cards and measure again.
+

@@ -26,6 +26,7 @@ import numpy as np
 
 from kyc.core.errors import ModelNotAvailable
 
+from ..normalize import to_ascii_digits
 from .base import Recognition
 
 INPUT_HEIGHT = 48
@@ -88,16 +89,25 @@ class PpOcrRecognizer:
                 cls._instances[key] = cls(model_path, providers, name)
             return cls._instances[key]
 
+    def _allowed(self, allowlist: str) -> np.ndarray:
+        mask = np.array([i == BLANK_INDEX or c in allowlist or to_ascii_digits(c) in allowlist
+                         for i, c in enumerate(self.charset)], np.float32)
+        return mask
+
     def recognize(self, image: np.ndarray, *, allowlist: str | None = None) -> Recognition:
         if image is None or image.size == 0:
             return Recognition.empty()
         probs = self._probs(image)
+        if allowlist:
+            # Constrained decoding: the best *allowed* class per step. Picking
+            # the best class first and dropping disallowed ones loses a whole
+            # number when the model prefers Arabic-Indic digits (٤٢٠) for
+            # Latin ones - so a digit counts as allowed in any script.
+            probs = probs * self._allowed(allowlist)
         best = probs.argmax(axis=1)
         keep = np.ones(len(best), bool)
         keep[1:] = best[1:] != best[:-1]
         keep &= best != BLANK_INDEX
-        if allowlist:
-            keep &= np.array([self.charset[i] in allowlist for i in best])
         chars = [self.charset[i] for i in best[keep] if i < len(self.charset)]
         if not chars:
             return Recognition.empty()
