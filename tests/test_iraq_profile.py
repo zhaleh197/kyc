@@ -73,3 +73,26 @@ def test_a_rectifying_profile_still_maps_boxes_back_onto_the_photo(monkeypatch, 
     h, w = photo.shape[:2]
     for x1, y1, x2, y2 in boxes.values():
         assert 0 <= x1 < x2 <= w and 0 <= y1 < y2 <= h
+
+
+def test_a_card_image_without_background_is_not_sent_to_a_person(monkeypatch, relaxed_settings, good_values):
+    """A scan or a tight crop has no card edge to find. The field detector's
+    own card box fills the frame, so the card was found: information only."""
+    flat = replace(IR_NATIONAL_CARD_FRONT, id="test_flat_scan", rectify=True)
+    monkeypatch.setitem(profiles._REGISTRY, flat.id, flat)
+    recognizer = SequenceRecognizer(good_values, confidence=0.9)
+    pipeline = DocumentOcrPipeline(relaxed_settings, detector_factory=lambda p: FakeDetector(),
+                                   recognizer_factory=lambda b: recognizer)
+    result = pipeline.run(make_card(), flat.id)
+
+    border = [r for r in result.reasons if r.code == "card_border_not_found"]
+    assert border, "the scan has no outline, so the reason should still be reported"
+    assert all(r.severity.value == "info" for r in border)
+    assert result.decision.value == "pass", [(r.code, r.severity.value) for r in result.reasons]
+
+
+def test_the_iraqi_card_keeps_arabic_letters_in_names():
+    keep = get_profile("iq_national_card_front").keep_letters
+    assert normalize.normalize_name("فاطمة", keep) == "فاطمة"
+    assert normalize.normalize_name("فاطمة") == "فاطمه"  # Iranian cards still fold
+    assert normalize.normalize_name("أحمد علي", keep) == "أحمد علی"

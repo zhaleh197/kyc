@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+import cv2
 import numpy as np
 
 from kyc.core.config import Settings, get_settings
@@ -34,6 +35,8 @@ from .schemas import DocumentOcrData, FieldResult
 MODULE_NAME = "ocr"
 MODULE_VERSION = "0.1.0"
 
+# The detector's card box covering this much of the frame means the frame is the card.
+CARD_FILLS_FRAME = 0.8
 # Quality problems that make any downstream reading untrustworthy rather than
 # merely uncertain. Reading on would produce confident nonsense, which is the
 # worst possible failure mode for identity data.
@@ -155,6 +158,10 @@ class DocumentOcrPipeline:
 
             card, detections, to_frame, orientation = self._locate(card, profile, to_frame)
             located = best_per_class(detections)
+            if any(r.code == "card_border_not_found" for r in reasons):
+                card, located, to_frame, orientation, reasons = self._card_from_detector(
+                    card, profile, located, to_frame, orientation, reasons
+                )
 
             fields, field_reasons = self._read_fields(card, profile, located)
             reasons += field_reasons
@@ -214,6 +221,37 @@ class DocumentOcrPipeline:
         info = {"rotation": o.rotation, "deskew_deg": o.deskew_deg, "layout_score": round(o.layout_score, 2)}
         return o.image, o.detections, o.matrix @ to_frame, info
 
+    def _card_from_detector(self, card, profile, located, to_frame, orientation, reasons):
+        """The outline finder saw no card edge - usually because the image *is*
+        the card (a scan or a tight crop), with no background around it. The
+        field detector also finds the card itself: if its box fills the frame,
+        the frame is the card; if not, crop to that box and detect again. Either
+        way the card was found, so the warning becomes information."""
+        container = next((f.detector_class for f in profile.fields if f.kind is FieldKind.CONTAINER), None)
+        box = located.get(container) if container else None
+        if box is None:
+            return card, located, to_frame, orientation, reasons
+        h, w = card.shape[:2]
+        x1, y1, x2, y2 = box.box
+        if (x2 - x1) * (y2 - y1) < CARD_FILLS_FRAME * w * h:
+            pad_x, pad_y = 0.02 * (x2 - x1), 0.02 * (y2 - y1)
+            x1, y1 = max(0, int(x1 - pad_x)), max(0, int(y1 - pad_y))
+            x2, y2 = min(w, int(x2 + pad_x)), min(h, int(y2 + pad_y))
+            size = profile.rectified_size
+            crop = cv2.resize(card[y1:y2, x1:x2], size, interpolation=cv2.INTER_CUBIC)
+            to_crop = rectify.scale_matrix((x2 - x1, y2 - y1), size) @ np.array(
+                [[1.0, 0.0, -x1], [0.0, 1.0, -y1], [0.0, 0.0, 1.0]]
+            )
+            card, detections, to_frame, orientation = self._locate(crop, profile, to_crop @ to_frame)
+            located = best_per_class(detections)
+        reasons = [
+            Reason.info(r.code, "No card outline in the photo; the field detector found the card",
+                        "لبهٔ کارت در عکس دیده نشد؛ مدل تشخیص فیلد خود کارت را پیدا کرد", r.field)
+            if r.code == "card_border_not_found" else r
+            for r in reasons
+        ]
+        return card, located, to_frame, orientation, reasons
+
     def _detect(self, card: np.ndarray, profile: DocumentProfile) -> list[Detection]:
         cfg = self.settings.ocr
         detector = self._detector_factory(profile)
@@ -267,7 +305,7 @@ class DocumentOcrPipeline:
             result.backend = backend_id
             result.raw = recognition.text
             result.confidence = round(recognition.confidence, 4)
-            result.value = self._normalize(spec, recognition.text)
+            result.value = self._normalize(spec, recognition.text, profile.keep_letters)
             result.low_confidence = recognition.confidence < cfg.min_field_confidence
             if spec.lexicon and cfg.name_lexicon:
                 reasons += self._match_lexicon(spec, result, crop, profile)
@@ -330,7 +368,7 @@ class DocumentOcrPipeline:
         return found
 
     @staticmethod
-    def _normalize(spec: FieldSpec, raw: str) -> str | None:
+    def _normalize(spec: FieldSpec, raw: str, keep_letters: str = "") -> str | None:
         if spec.kind is FieldKind.DIGITS:
             value = normalize.keep_digits(raw)
         elif spec.kind is FieldKind.DATE:
@@ -338,7 +376,7 @@ class DocumentOcrPipeline:
         elif spec.kind is FieldKind.CODE:
             value = normalize.normalize_code(raw)
         else:
-            value = normalize.normalize_name(raw)
+            value = normalize.normalize_name(raw, keep_letters)
         return value or None
 
     @staticmethod

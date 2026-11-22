@@ -60,6 +60,7 @@ def main() -> None:
     ap.add_argument("--labels", type=Path, default=None)
     ap.add_argument("--detector", default=None, help="another detector file in models/, to compare")
     ap.add_argument("--rectify", choices=("on", "off"), default=None, help="override the profile's rectify")
+    ap.add_argument("--flat", action="store_true", help="send the card image as it is (no background, no tilt)")
     args = ap.parse_args()
     profile = get_profile(PROFILE)
     if args.detector or args.rectify:
@@ -72,17 +73,20 @@ def main() -> None:
             labels[Path(cols[0]).stem] = dict(zip(LABEL_COLUMNS, cols[1:], strict=False))
     pipeline = DocumentOcrPipeline(get_settings())
     fields = [f.key for f in get_profile(PROFILE).value_fields]
-    located, shaped, decisions, errors = Counter(), Counter(), Counter(), Counter()
+    located, shaped, decisions, errors, reason_codes = Counter(), Counter(), Counter(), Counter(), Counter()
     names, n = Counter(), 0
     for p in sorted(args.images.glob("*.jpg")):
         card = cv2.imdecode(np.fromfile(str(p), np.uint8), cv2.IMREAD_COLOR)
         try:
-            result = pipeline.run(photograph(card), PROFILE)
+            result = pipeline.run(card if args.flat else photograph(card), PROFILE)
         except KycError as exc:
             errors[exc.code] += 1
             continue
         n += 1
         decisions[result.decision.value] += 1
+        for r in result.reasons:
+            if r.severity.value != "info":
+                reason_codes[r.code] += 1
         values = result.data["values"]
         for key in fields:
             located[key] += values.get(key) is not None
@@ -90,8 +94,10 @@ def main() -> None:
                 shaped[key] += bool(SHAPES[key].fullmatch(values[key]))
         for key, truth in labels.get(p.stem, {}).items():
             names[key, "n"] += 1
-            names[key, "ok"] += normalize.normalize_name(truth) == (values.get(key) or "")
+            truth = normalize.normalize_name(truth, get_profile(PROFILE).keep_letters)
+            names[key, "ok"] += truth == (values.get(key) or "")
     print(f"cards run: {n}; refused: {dict(errors) or 0}; decisions: {dict(decisions)}")
+    print(f"reasons (warn/error): {dict(reason_codes.most_common())}")
     for key in fields:
         extra = f"   right shape {shaped[key]}/{located[key]}" if key in SHAPES else ""
         print(f"  {key:20s} read {located[key]:3d}/{n}{extra}")

@@ -73,6 +73,9 @@ IQ_NATIONAL_CARD_FRONT = DocumentProfile(
     digit_backend="ppocr_arabic",
     # The detector was trained on flat card images (training/krg_card).
     rectify=True,
+    # Arabic names keep ة أ إ ؤ. (ھ is still folded to ه: the recogniser
+    # writes Sorani h as ھ, names are usually typed with ه.)
+    keep_letters="ةأإؤ",
     validator=_validate_iraq_front,
     fields=(
         FieldSpec("card", "card", FieldKind.CONTAINER, "کارت", "ID card"),

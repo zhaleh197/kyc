@@ -65,6 +65,9 @@ class DocumentProfile:
     # Flatten the card before detection; None = settings.ocr.rectify. Must
     # match how the profile's detector was trained (whole photos or flat cards).
     rectify: bool | None = None
+    # Arabic letters kept in names instead of folded onto Persian ones (ة -> ه
+    # and so on suits Iranian cards; Arabic and Kurdish names need them).
+    keep_letters: str = ""
     rectified_width: int = 1024
     validator: Callable[[dict], list[Reason]] | None = field(default=None, compare=False)
     # Optional post-processing that adds derived values (gregorian dates,

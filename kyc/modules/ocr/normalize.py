@@ -61,9 +61,12 @@ def to_ascii_digits(text: str) -> str:
     return text.translate(_DIGIT_MAP)
 
 
-def fold_letters(text: str) -> str:
-    """Map Arabic letter variants onto their Persian counterparts."""
-    return text.translate(_LETTER_TABLE)
+def fold_letters(text: str, keep: str = "") -> str:
+    """Map Arabic letter variants onto their Persian counterparts, except the
+    letters in `keep` (a card whose names are Arabic or Kurdish keeps ة, أ...)."""
+    if not keep:
+        return text.translate(_LETTER_TABLE)
+    return text.translate({k: v for k, v in _LETTER_TABLE.items() if chr(k) not in keep})
 
 
 def strip_marks(text: str) -> str:
@@ -74,7 +77,7 @@ def strip_invisibles(text: str) -> str:
     return _INVISIBLES.sub("", text)
 
 
-def normalize_text(text: str) -> str:
+def normalize_text(text: str, keep_letters: str = "") -> str:
     """Full pipeline for a free-text field (names, place of issue).
 
     Order matters: NFC first so decomposed sequences become single code points,
@@ -84,7 +87,7 @@ def normalize_text(text: str) -> str:
         return ""
     out = unicodedata.normalize("NFC", text)
     out = strip_invisibles(out)
-    out = fold_letters(out)
+    out = fold_letters(out, keep_letters)
     out = strip_marks(out)
     out = to_ascii_digits(out)
     # A space next to a ZWNJ is always an OCR artefact - one or the other.
@@ -105,10 +108,11 @@ def keep_digits(text: str) -> str:
 _NAME_ALLOWED = re.compile("[^ء-غف-يٮ-ۓە‌ ]")
 
 
-def normalize_name(text: str) -> str:
+def normalize_name(text: str, keep_letters: str = "") -> str:
     """Names must not contain digits or latin characters; a recogniser that
-    emits them has misread the crop, so we drop them rather than pass junk on."""
-    out = normalize_text(text)
+    emits them has misread the crop, so we drop them rather than pass junk on.
+    `keep_letters`: Arabic letters not to fold (see fold_letters)."""
+    out = normalize_text(text, keep_letters)
     out = _NAME_ALLOWED.sub(" ", out)
     return _WS.sub(" ", out).strip()
 
