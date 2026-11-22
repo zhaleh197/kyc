@@ -96,3 +96,24 @@ def test_the_iraqi_card_keeps_arabic_letters_in_names():
     assert normalize.normalize_name("فاطمة", keep) == "فاطمة"
     assert normalize.normalize_name("فاطمة") == "فاطمه"  # Iranian cards still fold
     assert normalize.normalize_name("أحمد علي", keep) == "أحمد علی"
+
+
+def test_text_lines_splits_two_lines_that_touch():
+    import numpy as np
+
+    from kyc.modules.ocr.pipeline import text_lines
+
+    crop = np.full((100, 200, 3), 230, np.uint8)
+    crop[10:48, 20:180] = 30   # upper line
+    crop[48:90, 40:160] = 30   # lower line, no blank row between
+    crop[48, 20:180] = 230     # only a thinner row marks the join
+    lines = text_lines(crop)
+    assert len(lines) == 2
+    assert lines[0].shape[0] < 70 and lines[1].shape[0] < 70
+
+
+def test_only_short_lists_are_matched_line_by_line():
+    profile = get_profile("iq_national_card_front")
+    per_line = {f.key for f in profile.fields if f.lexicon_per_line}
+    assert per_line == {"sex"}
+    assert not any(f.lexicon_per_line for f in IR_NATIONAL_CARD_FRONT.fields)

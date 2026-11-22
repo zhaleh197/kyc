@@ -10,6 +10,7 @@ card later is a matter of registering a profile and shipping its detector.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 
 import cv2
 import numpy as np
@@ -34,6 +35,38 @@ from .schemas import DocumentOcrData, FieldResult
 
 MODULE_NAME = "ocr"
 MODULE_VERSION = "0.1.0"
+
+def text_lines(crop: np.ndarray, min_share: float = 0.2) -> list[np.ndarray]:
+    """The crop cut into its text lines (dark ink on a light card), top to
+    bottom; a band shorter than `min_share` of the crop is a stray dot or the
+    edge of a neighbouring row."""
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if crop.ndim == 3 else crop
+    _, ink = cv2.threshold(gray, 0, 1, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    rows = ink.sum(1) > max(2, 0.02 * ink.shape[1])
+    h = len(rows)
+    bands, start = [], None
+    for y, on in enumerate(np.r_[rows, False]):
+        if on and start is None:
+            start = y
+        elif not on and start is not None:
+            if bands and start - bands[-1][1] < 0.06 * h:  # dots above / below a line
+                bands[-1][1] = y
+            else:
+                bands.append([start, y])
+            start = None
+    bands = [(a, b) for a, b in bands if b - a >= min_share * h]
+    if len(bands) < 2:
+        # Lines set so close that no blank row parts them: cut at the row
+        # with the least ink in the middle of the crop.
+        counts = ink.sum(1)
+        lo, hi = int(0.3 * h), int(0.7 * h)
+        if hi - lo < 2:
+            return []
+        cut = lo + int(np.argmin(counts[lo:hi]))
+        bands = [(0, cut), (cut, h)]
+    pad = int(0.05 * h)
+    return [crop[max(0, a - pad):min(h, b + pad)] for a, b in bands]
+
 
 # The detector's card box covering this much of the frame means the frame is the card.
 CARD_FILLS_FRAME = 0.8
@@ -327,7 +360,12 @@ class DocumentOcrPipeline:
                 log_probs, charset = scorer.log_probs(crop), scorer.charset
         except KycError:
             pass  # no scorer model: exact and nearest matching still apply
-        match = self._matcher(spec.lexicon).resolve(result.value or "", log_probs, charset)
+        matcher = self._matcher(spec.lexicon)
+        match = matcher.resolve(result.value or "", log_probs, charset)
+        if match.value is None and spec.lexicon_per_line:
+            # A box that slipped onto the next row holds two lines and reads
+            # as neither: try each line of the crop on its own.
+            match = self._match_lines(spec, crop, profile, matcher, scorer if log_probs is not None else None) or match
         result.lexicon_match = match.method
         if match.value is not None:
             result.value = match.value
@@ -343,6 +381,19 @@ class DocumentOcrPipeline:
                 spec.key,
             )
         ]
+
+    def _match_lines(self, spec, crop, profile, matcher, scorer):
+        lines = text_lines(crop)
+        if len(lines) < 2:
+            return None
+        recognizer = self._recognizer_factory(profile.text_backend or self.settings.ocr.text_backend)
+        for line in lines:
+            text = self._normalize(spec, recognizer.recognize(line).text, profile.keep_letters) or ""
+            log_probs = scorer.log_probs(line) if scorer is not None else None
+            found = matcher.resolve(text, log_probs, scorer.charset if scorer is not None else None)
+            if found.value is not None:
+                return replace(found, method=f"{found.method}_line")
+        return None
 
     @staticmethod
     def _field_findings(spec: FieldSpec, result: FieldResult) -> list[Reason]:

@@ -35,6 +35,10 @@ class FieldSpec:
     exact_len: int | None = None   # e.g. 10 for the national id
     charset_hint: str | None = None  # passed to recognisers that support an allowlist
     lexicon: str | None = None  # closed vocabulary in ocr/lexicon/<name>.txt
+    # When the crop matches nothing on the list, try each of its text lines:
+    # for a short list no neighbouring row can be on (sex), never for names -
+    # the row above a name is often another valid name.
+    lexicon_per_line: bool = False
 
 
 @dataclass(frozen=True)
