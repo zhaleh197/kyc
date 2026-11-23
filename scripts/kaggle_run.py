@@ -346,7 +346,7 @@ def cmd_push(args: argparse.Namespace) -> int:
 
         sources = [src_id]
         if args.data_dataset:
-            sources.append(args.data_dataset)
+            sources.extend(args.data_dataset)
         else:
             print("[warn] no --data-dataset given; attach your dataset in the Kaggle UI before running")
 
@@ -524,7 +524,12 @@ def cmd_upload_data(args: argparse.Namespace) -> int:
             except Exception as exc:  # noqa: BLE001 - the SDK raises bare HTTPError
                 if is_missing_dataset_error(exc):
                     print("         dataset does not exist yet; creating it")
-                    api.dataset_create_new(str(source), public=False, dir_mode="zip", quiet=False)
+                    created = api.dataset_create_new(str(source), public=False, dir_mode="zip", quiet=False)
+                    # The SDK reports a refused create in the response, not as an exception.
+                    problem = getattr(created, "error", None) or getattr(created, "invalidTags", None)
+                    if problem or getattr(created, "status", "ok") not in (None, "ok", "Ok", "OK"):
+                        raise RuntimeError(f"Kaggle refused the new dataset: {problem or created.status}")
+                    print(f"         created: {getattr(created, 'url', '') or dataset_id}")
                 else:
                     raise
 
@@ -561,7 +566,8 @@ def main() -> int:
         "--notebook", default=str(NOTEBOOK), help=f"Notebook to push (default: {NOTEBOOK.relative_to(REPO_ROOT)})"
     )
     push.add_argument("--title", default=None, help="Kernel title; defaults to the kernel slug")
-    push.add_argument("--data-dataset", default=None, help="Your card dataset as <owner>/<slug>")
+    push.add_argument("--data-dataset", action="append", default=None,
+                      help="A dataset to attach, as <owner>/<slug>; repeat for several")
     push.add_argument("--notes", default="automated push", help="Dataset version notes")
     push.add_argument("--dataset-wait", type=int, default=300, help="Seconds to wait for the dataset to become ready")
     push.add_argument("--attempts", type=int, default=5, help="Retries per upload when the network blocks one")

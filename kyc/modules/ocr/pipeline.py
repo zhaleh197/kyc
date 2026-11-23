@@ -36,10 +36,9 @@ from .schemas import DocumentOcrData, FieldResult
 MODULE_NAME = "ocr"
 MODULE_VERSION = "0.1.0"
 
-def text_lines(crop: np.ndarray, min_share: float = 0.2) -> list[np.ndarray]:
-    """The crop cut into its text lines (dark ink on a light card), top to
-    bottom; a band shorter than `min_share` of the crop is a stray dot or the
-    edge of a neighbouring row."""
+def _ink_bands(crop: np.ndarray) -> tuple[np.ndarray, list[list[int]]]:
+    """Rows with ink (dark on a light card) grouped into bands, top to bottom;
+    a gap under 6% of the height joins two bands (dots above / below a line)."""
     gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if crop.ndim == 3 else crop
     _, ink = cv2.threshold(gray, 0, 1, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
     rows = ink.sum(1) > max(2, 0.02 * ink.shape[1])
@@ -49,11 +48,46 @@ def text_lines(crop: np.ndarray, min_share: float = 0.2) -> list[np.ndarray]:
         if on and start is None:
             start = y
         elif not on and start is not None:
-            if bands and start - bands[-1][1] < 0.06 * h:  # dots above / below a line
+            if bands and start - bands[-1][1] < 0.06 * h:
                 bands[-1][1] = y
             else:
                 bands.append([start, y])
             start = None
+    return ink, bands
+
+
+def drop_neighbour_rows(crop: np.ndarray) -> np.ndarray:
+    """The crop without the edges of the rows above and below.
+
+    Rows on the Iraqi card sit close, so a field box padded for tall letters
+    takes in the tail of the line above (a final ي) or the top of the line
+    below, and the recogniser reads it as one more letter. Ink bands that
+    touch the top or bottom edge and are smaller than the main line are cut
+    away; the main line keeps a little margin.
+    """
+    ink, bands = _ink_bands(crop)
+    if len(bands) < 2:
+        return crop
+    h = ink.shape[0]
+    weight = [int(ink[a:b].sum()) for a, b in bands]
+    main = int(np.argmax(weight))
+    top, bottom = 0, h
+    for i, (a, b) in enumerate(bands):
+        if i == main or weight[i] >= weight[main]:
+            continue
+        if a == 0 and i < main:
+            top = max(top, (b + bands[main][0]) // 2)
+        elif b == h and i > main:
+            bottom = min(bottom, (bands[main][1] + a + 1) // 2)
+    return crop[top:bottom] if bottom - top >= 0.4 * h else crop
+
+
+def text_lines(crop: np.ndarray, min_share: float = 0.2) -> list[np.ndarray]:
+    """The crop cut into its text lines (dark ink on a light card), top to
+    bottom; a band shorter than `min_share` of the crop is a stray dot or the
+    edge of a neighbouring row."""
+    ink, bands = _ink_bands(crop)
+    h = ink.shape[0]
     bands = [(a, b) for a, b in bands if b - a >= min_share * h]
     if len(bands) < 2:
         # Lines set so close that no blank row parts them: cut at the row
@@ -67,6 +101,40 @@ def text_lines(crop: np.ndarray, min_share: float = 0.2) -> list[np.ndarray]:
     pad = int(0.05 * h)
     return [crop[max(0, a - pad):min(h, b + pad)] for a, b in bands]
 
+
+
+def trim_label_colon(crop: np.ndarray) -> np.ndarray:
+    """The crop without a label's colon (:) at its right edge.
+
+    Iraqi cards print the label, a colon, then the value; the detector's box
+    for the value often takes the colon in, and a recogniser reads its two
+    dots as a letter (ب, إ, ی). A colon is two small, dot-sized blobs one
+    above the other, with only background between them and the text.
+    """
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if crop.ndim == 3 else crop
+    h, w = gray.shape
+    _, ink = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    n, _, stats, _ = cv2.connectedComponentsWithStats(ink, connectivity=8)
+    dot_max, dot_min = 0.25 * h, 0.04 * h
+    dots = [s for s in stats[1:]
+            if s[0] >= 0.6 * w and dot_min <= s[2] <= dot_max and dot_min <= s[3] <= dot_max
+            and 0.5 <= s[2] / s[3] <= 2.0 and s[4] >= 0.5 * s[2] * s[3]]
+    for i, a in enumerate(dots):
+        for b in dots[i + 1:]:
+            top, low = (a, b) if a[1] < b[1] else (b, a)
+            overlap = min(top[0] + top[2], low[0] + low[2]) - max(top[0], low[0])
+            if overlap < 0.5 * min(top[2], low[2]) or low[1] - (top[1] + top[3]) < 0.5 * top[3]:
+                continue
+            left = min(top[0], low[0])
+            # Anything bigger than a dot inked at or right of the colon means it
+            # is part of the text. (Dots are not: the next row's colon is often cut in.)
+            others = [s for s in stats[1:] if s[4] >= 0.3 * min(top[4], low[4])
+                      and s[0] + s[2] > left and not any((s == d).all() for d in dots)]
+            if others:
+                continue
+            cut = max(1, left - int(0.04 * h))
+            return crop[:, :cut]
+    return crop
 
 # The detector's card box covering this much of the frame means the frame is the card.
 CARD_FILLS_FRAME = 0.8
@@ -327,6 +395,10 @@ class DocumentOcrPipeline:
             pad_y = cfg.text_crop_padding_y if spec.kind is FieldKind.TEXT else None
             crop = crop_with_padding(card, detection.box, cfg.field_crop_padding, pad_y)
             crop = upscale_to_height(crop, cfg.upscale_small_crops_to)
+            if profile.trim_label_colon and spec.kind is FieldKind.TEXT:
+                crop = trim_label_colon(crop)
+            if profile.drop_neighbour_rows and spec.kind is FieldKind.TEXT and not spec.lexicon_per_line:
+                crop = drop_neighbour_rows(crop)
 
             if spec.kind in (FieldKind.DIGITS, FieldKind.DATE, FieldKind.CODE):
                 backend_id = profile.digit_backend or cfg.digit_backend

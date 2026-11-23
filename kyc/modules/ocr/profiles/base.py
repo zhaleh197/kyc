@@ -72,6 +72,12 @@ class DocumentProfile:
     # Arabic letters kept in names instead of folded onto Persian ones (ة -> ه
     # and so on suits Iranian cards; Arabic and Kurdish names need them).
     keep_letters: str = ""
+    # Cut a label's colon off the right edge of text crops (see
+    # pipeline.trim_label_colon); for cards that print "label: value".
+    trim_label_colon: bool = False
+    # Cut the edges of the rows above and below off text crops (see
+    # pipeline.drop_neighbour_rows); for cards whose rows sit close.
+    drop_neighbour_rows: bool = False
     rectified_width: int = 1024
     validator: Callable[[dict], list[Reason]] | None = field(default=None, compare=False)
     # Optional post-processing that adds derived values (gregorian dates,

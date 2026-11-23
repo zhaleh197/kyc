@@ -14,7 +14,10 @@ at (27-78 px tall), blur, perspective and JPEG. Text is mixed:
 
     fa   Iranian card: a given name, surname or father's name
     ckb  Iraqi Kurdistan card (Sorani): 1-3 names, own/father/grandfather
-    mix  random letters, so rare letters (ڕ ڵ ۆ ێ ژ گ ...) are seen often
+    ar   Iraqi card names in Arabic spelling: Arabic names (ة ي ى أ ...) and
+         Kurdish names written the Arabic way (ي ك, ه for ە), as many
+         Kurdistan cards print them
+    mix  random letters, so rare letters (ڕ ڵ ۆ ێ ژ گ ة ...) are seen often
 
 Nothing here reads a real card: texts come from the lists in texts/ and from
 kyc/modules/ocr/lexicon/given_names_fa.txt, fonts from the system font folder.
@@ -57,6 +60,10 @@ SURNAME_SUFFIXES = [
 ]
 PERSIAN_LETTERS = "آابپتثجچحخدذرزژسشصضطظعغفقکگلمنوهی"
 SORANI_LETTERS = "ئابپتجچحخدرڕزژسشعغفڤقکگلڵمنوۆهھەیێ"
+ARABIC_LETTERS = "ءآأؤإئابةتثجحخدذرزسشصضطظعغفقكلمنهوىي"
+# Kurdish names in Arabic spelling: Arabic yeh and kaf, heh for the vowel ە,
+# and no Sorani-only marks the Arabic keyboard lacks.
+ARABIC_SPELLING = str.maketrans({"ی": "ي", "ک": "ك", "ە": "ه", "ێ": "ي", "ۆ": "و", "ڵ": "ل", "ڕ": "ر"})
 
 
 def read_list(path: Path) -> list[str]:
@@ -70,6 +77,7 @@ class Texts:
         self.given_fa = read_list(REPO_ROOT / "kyc/modules/ocr/lexicon/given_names_fa.txt")
         self.surnames_fa = read_list(HERE / "texts/surnames_fa.txt")
         self.given_ckb = read_list(HERE / "texts/given_names_ckb.txt")
+        self.given_ar = read_list(HERE / "texts/given_names_ar.txt")
 
     def persian(self) -> str:
         r = self.rng.random()
@@ -88,18 +96,30 @@ class Texts:
             text = text.replace("ھ", "ه")  # both spellings of /h/ are in use
         return text
 
+    def arabic(self) -> str:
+        """1-3 names as an Iraqi card prints them in Arabic letters."""
+        words = []
+        for _ in range(self.rng.choice((1, 1, 2, 3))):
+            if self.rng.random() < 0.5:
+                words.append(self.rng.choice(self.given_ar))
+            else:
+                words.append(self.rng.choice(self.given_ckb).translate(ARABIC_SPELLING))
+        return " ".join(words)
+
     def letters(self) -> str:
-        alphabet = self.rng.choice((PERSIAN_LETTERS, SORANI_LETTERS))
+        alphabet = self.rng.choice((PERSIAN_LETTERS, SORANI_LETTERS, ARABIC_LETTERS))
         words = ["".join(self.rng.choice(alphabet) for _ in range(self.rng.randint(2, 7)))
                  for _ in range(self.rng.randint(1, 3))]
         return " ".join(words)
 
     def sample(self) -> tuple[str, str]:
         r = self.rng.random()
-        if r < 0.5:
+        if r < 0.3:
             return "fa", self.persian()
-        if r < 0.85:
+        if r < 0.6:
             return "ckb", self.sorani()
+        if r < 0.88:
+            return "ar", self.arabic()
         return "mix", self.letters()
 
 
@@ -116,8 +136,10 @@ def background(rng: random.Random, h: int, w: int) -> np.ndarray:
     """Pale card tint with a faint pattern, like the guilloche behind the text."""
     # Iranian card: light cyan (BGR ~ 195,185,155 in phone photos); Iraqi
     # cards and lighting vary, so the tint spreads around it.
+    # The Iraqi card comes white (with a blue tinge) or pale yellow.
     base = np.array(rng.choice([(195, 185, 155), (205, 195, 170), (215, 205, 185), (200, 195, 180),
-                                (220, 215, 205), (205, 200, 210)]), float)
+                                (220, 215, 205), (205, 200, 210), (232, 228, 225), (238, 236, 236),
+                                (165, 210, 230), (150, 200, 225)]), float)
     base += np.array([rng.uniform(-10, 10) for _ in range(3)])
     img = np.ones((h, w, 3)) * base
     # gradient (uneven light)
@@ -207,7 +229,7 @@ def generate(out: Path, count: int, seed: int, val_fraction: float) -> None:
     if not fonts:
         raise SystemExit(f"No usable fonts found in {FONT_DIR}")
     (out / "images").mkdir(parents=True, exist_ok=True)
-    train, val, kinds = [], [], {"fa": 0, "ckb": 0, "mix": 0}
+    train, val, kinds = [], [], {"fa": 0, "ckb": 0, "ar": 0, "mix": 0}
     made = 0
     while made < count:
         kind, text = texts.sample()

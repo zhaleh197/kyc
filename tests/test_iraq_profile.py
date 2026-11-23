@@ -117,3 +117,51 @@ def test_only_short_lists_are_matched_line_by_line():
     per_line = {f.key for f in profile.fields if f.lexicon_per_line}
     assert per_line == {"sex"}
     assert not any(f.lexicon_per_line for f in IR_NATIONAL_CARD_FRONT.fields)
+
+
+def test_a_label_colon_is_cut_off_the_name_crop():
+    import numpy as np
+
+    from kyc.modules.ocr.pipeline import trim_label_colon
+
+    crop = np.full((70, 140, 3), 235, np.uint8)
+    crop[20:50, 10:100] = 30          # the name
+    crop[22:26, 126:130] = 60         # colon, upper dot
+    crop[38:42, 126:130] = 60         # colon, lower dot
+    crop[66:70, 126:130] = 60         # top of the next row's colon
+    out = trim_label_colon(crop)
+    assert 100 <= out.shape[1] < 126
+
+    plain = crop.copy()
+    plain[:, 110:] = 235
+    assert trim_label_colon(plain).shape == plain.shape
+    # Dots inside the text (a letter's dots) are left alone.
+    inside = plain.copy()
+    inside[22:26, 60:64] = 235
+    inside[5:9, 60:64] = 60
+    inside[12:16, 60:64] = 60
+    assert trim_label_colon(inside).shape == inside.shape
+
+
+def test_only_the_iraqi_card_trims_label_colons():
+    assert get_profile("iq_national_card_front").trim_label_colon
+    assert not IR_NATIONAL_CARD_FRONT.trim_label_colon
+
+
+def test_the_tail_of_the_row_above_is_cut_off_a_name_crop():
+    import numpy as np
+
+    from kyc.modules.ocr.pipeline import drop_neighbour_rows
+
+    crop = np.full((70, 140, 3), 235, np.uint8)
+    crop[0:8, 10:30] = 30       # the tail of a letter in the row above
+    crop[20:50, 10:120] = 30    # the name
+    crop[64:70, 50:70] = 30     # the top of the row below
+    out = drop_neighbour_rows(crop)
+    assert 30 <= out.shape[0] < 70
+    gray = out[..., 0]
+    assert (gray[:3] > 200).all() and (gray[-3:] > 200).all()
+
+    single = np.full((70, 140, 3), 235, np.uint8)
+    single[20:50, 10:120] = 30
+    assert drop_neighbour_rows(single).shape == single.shape

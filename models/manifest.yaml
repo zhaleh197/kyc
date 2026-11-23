@@ -192,28 +192,31 @@ artifacts:
 
   - name: ppocr_fa_ckb_rec.onnx
     module: ocr
-    task: Persian + Kurdish (Sorani) text line recognition (names) - backend ppocr_fa_ckb, not the default
+    task: Persian + Kurdish (Sorani) + Arabic-spelled name line recognition - backend ppocr_fa_ckb (Iraqi card)
     trained_by: >
-      training/kaggle/finetune_ppocr_fa_ckb.ipynb: PP-OCRv5 arabic mobile rec
-      fine-tuned on 196k synthetic Persian / Sorani name lines (dataset
-      kyc-ocr-synth-fa-ckb), lr 2e-4, batch 48. The run hit Kaggle's 12 h
-      limit in epoch 10 of 12; best_accuracy (epoch 10, val acc 0.958) was
-      exported by training/kaggle/export_ppocr_fa_ckb.ipynb. Same character
-      list as ppocr_arabic, in the metadata ("character").
+      v2: training/kaggle/finetune_ppocr_fa_ckb_v2.ipynb, continued from the v1
+      checkpoint (dataset kyc-ppocr-fa-ckb-ckpt) for 5 epochs, lr 1e-4, on 150k
+      new synthetic lines (kyc-ocr-synth-fa-ckb-v2: fa 30%, ckb 30%, Arabic
+      spelling with ة ي ى أ إ ؤ 28%, mixed 12%; white and pale-yellow cards).
+      best_accuracy epoch 5, val acc 0.922. v1 (8936f153...) was PP-OCRv5
+      arabic mobile rec fine-tuned on 196k fa/ckb lines, lr 2e-4, epoch 10 of 12.
+      Same character list as ppocr_arabic, in the metadata ("character").
     license: Apache-2.0 (PaddleOCR base weights)
-    sha256: 8936f153a90b7b56fe114b6b2383911ff6718307fad5e3ff67aa4a9505e4ffed
-    added_at: "2026-11-22"
+    sha256: fd794dd7017358868bc16ac7e698e133da185018a61cbc4f11f2d3e1e021eb9f
+    added_at: "2026-11-23"
     metrics:
-      synthetic_val_letters: {fa: 99.1%, fa_gzpc: 96.8%, ckb: 96.3%}   # ppocr_arabic: 91.3%, 41.0%, 4.1%
-      ir_field_crops_letters: 362/513 (71%)     # ppocr_arabic 406/513 (79%) - worse
-      ckb_field_crops_letters: 141/156 (90%)    # ppocr_arabic 79/156 (51%); with a Kurdish letter 66/72 vs 5/72
-      real_ir_cards_names_right: 37/42          # ppocr_arabic 38/42; wrong-but-accepted 1 vs 2; review 4 vs 2
+      synthetic_val_exact: {ar: 83.3%, ckb: 92.0%, fa: 96.5%, fa_gzpc: 95.2%}   # v1: 0.0%, 90.4%, 95.1%, 93.4%
+      iq_cards_names_right_photographed: 155/180   # v1 148/180 (both with the colon trim)
+      iq_cards_names_right_flat: 147/180           # v1 145/180
+      ta_marbuta_errors: 0                         # v1 11 (read as ه or ق)
+    known_limitations: >
+      Reads a label's colon as ب / إ / ی when the name box takes it in, hence
+      the profile's trim_label_colon. Still confuses ا with آ / إ in some
+      Kurdish names, and the 30 labelled cards are images from a public set,
+      not genuine cards.
     verdict: >
-      Not the default. Far better on Kurdish, but worse on real Iranian field
-      crops (71% vs 79%) and no better on the 14 labelled Iranian cards, so
-      ppocr_arabic stays for the Iranian card. Meant for a Kurdish / Iraqi
-      card profile; the synthetic lines evidently do not cover the look of
-      real Iranian crops well enough to replace the base model there.
+      Used for the Iraqi (Kurdistan) card only. ppocr_arabic stays for the
+      Iranian card: v1 was worse on real Iranian field crops (71% vs 79%).
 
   - name: crnn_fa_digits.onnx
     module: ocr

@@ -76,6 +76,10 @@ IQ_NATIONAL_CARD_FRONT = DocumentProfile(
     # Arabic names keep ة أ إ ؤ. (ھ is still folded to ه: the recogniser
     # writes Sorani h as ھ, names are usually typed with ه.)
     keep_letters="ةأإؤ",
+    # "ناو:" - the name box often takes the label's colon in.
+    trim_label_colon=True,
+    # The name rows sit close: a box takes in the tail of the row above.
+    drop_neighbour_rows=True,
     validator=_validate_iraq_front,
     fields=(
         FieldSpec("card", "card", FieldKind.CONTAINER, "کارت", "ID card"),
