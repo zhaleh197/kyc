@@ -198,3 +198,19 @@ def test_a_bright_card_whose_fields_all_read_passes(relaxed_settings, good_value
     assert result.decision is Decision.PASS, codes
     assert codes["card_too_bright"].value == "info"
     assert result.data["values"]["national_id"] == "0012345679"
+
+
+def test_a_small_but_usable_image_is_read_and_goes_to_review(relaxed_settings, good_values):
+    pipeline, _ = build(relaxed_settings, good_values)
+    photo = photograph(make_card())
+    scale = 300 / min(photo.shape[:2])
+    small = cv2.resize(photo, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+    result = pipeline.run(small)
+    assert "image_small" in [r.code for r in result.reasons]
+    assert result.decision is not Decision.PASS
+
+
+def test_a_tiny_image_is_still_refused(relaxed_settings, good_values):
+    pipeline, _ = build(relaxed_settings, good_values)
+    with pytest.raises(ImageQualityError):
+        pipeline.run(make_card()[:150, :240])

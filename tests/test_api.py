@@ -123,3 +123,12 @@ def test_missing_detector_model_returns_503(relaxed_settings, card_jpeg, tmp_pat
 
     assert response.status_code == 503
     assert response.json()["error"] == "model_not_available"
+
+
+def test_a_too_small_image_says_why_in_persian(client):
+    ok, buf = cv2.imencode(".jpg", make_card()[:80, :120])
+    response = client.post(
+        "/v1/ocr/document/base64",
+        json={"image_base64": base64.b64encode(buf.tobytes()).decode()},
+    )
+    assert "کوچک" in response.json()["message_fa"]

@@ -222,6 +222,15 @@ class DocumentOcrPipeline:
         with Timer() as timer:
             ensure_min_size(image, cfg.min_image_side)
             source_size = (image.shape[1], image.shape[0])
+            if min(source_size) < cfg.small_image_side:
+                w, h = source_size
+                reasons.append(Reason.warn(
+                    "image_small",
+                    f"Small image ({w}x{h}); read anyway, a person should check it "
+                    f"(at least {cfg.small_image_side}px on the short side is expected)",
+                    f"تصویر کوچک است ({w}×{h} پیکسل)؛ خوانده شد ولی باید بررسی شود "
+                    f"(ضلع کوتاه دست‌کم {cfg.small_image_side} پیکسل انتظار می‌رود)",
+                ))
             image = rectify.prepare(image, cfg.max_image_side)
             # source photo -> the frame the boxes end up in
             to_frame = rectify.scale_matrix(source_size, (image.shape[1], image.shape[0]))

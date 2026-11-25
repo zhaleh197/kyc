@@ -66,6 +66,8 @@ def ensure_min_size(img: np.ndarray, min_side: int) -> None:
         raise ImageQualityError(
             f"Image is too small ({w}x{h}); the short side must be at least {min_side}px",
             details={"width": w, "height": h, "min_side": min_side},
+            message_fa=f"تصویر خیلی کوچک است ({w}×{h} پیکسل)؛ ضلع کوتاه باید دست‌کم {min_side} پیکسل باشد. "
+                       "عکس اصلی یا عکس دوربین را بفرستید.",
         )
 
 

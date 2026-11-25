@@ -15,15 +15,20 @@ class KycError(Exception):
     code = "kyc_error"
     http_status = 500
 
-    def __init__(self, message: str, *, code: str | None = None, details: dict | None = None):
+    def __init__(self, message: str, *, code: str | None = None, details: dict | None = None,
+                 message_fa: str = ""):
         super().__init__(message)
         self.message = message
+        self.message_fa = message_fa
         if code:
             self.code = code
         self.details = details or {}
 
     def to_dict(self) -> dict:
-        return {"error": self.code, "message": self.message, "details": self.details}
+        out = {"error": self.code, "message": self.message, "details": self.details}
+        if self.message_fa:
+            out["message_fa"] = self.message_fa
+        return out
 
 
 class InvalidInput(KycError):

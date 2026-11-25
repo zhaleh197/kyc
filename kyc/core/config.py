@@ -21,7 +21,11 @@ class OcrSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="KYC_OCR_", env_file=".env", extra="ignore")
 
     # --- input gating -------------------------------------------------
-    min_image_side: int = Field(400, description="Reject documents smaller than this on the short side")
+    # Below min_image_side the photo is refused; below small_image_side it is
+    # read but goes to review. A clean, sharp 254x163 web image reads fine;
+    # a camera photo that small would not be clean, so a person looks.
+    min_image_side: int = Field(200, description="Reject documents smaller than this on the short side")
+    small_image_side: int = Field(400, description="Documents smaller than this on the short side go to review")
     max_image_side: int = Field(2400, description="Downscale anything larger before processing")
     # 60 was calibrated assuming a rectified, cropped card (little background
     # in frame). With rectify=False (see below) this metric runs on the whole
