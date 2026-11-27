@@ -78,6 +78,15 @@ class DocumentProfile:
     # Cut the edges of the rows above and below off text crops (see
     # pipeline.drop_neighbour_rows); for cards whose rows sit close.
     drop_neighbour_rows: bool = False
+    # Detector classes of the value rows, top to bottom, for a card that
+    # prints them one under the other at an even pitch: a box is put on the
+    # row it sits on whatever its label (see rows.place_rows), and an empty
+    # row is read where it would be.
+    row_order: tuple[str, ...] = ()
+    # Read each text crop a second time, lightly blurred, and keep the surer
+    # reading: a sharp security print behind the letters (fine diagonal
+    # lines) can make the recogniser drop or change a letter.
+    reread_blurred: bool = False
     rectified_width: int = 1024
     validator: Callable[[dict], list[Reason]] | None = field(default=None, compare=False)
     # Optional post-processing that adds derived values (gregorian dates,

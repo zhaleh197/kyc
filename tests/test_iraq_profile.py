@@ -165,3 +165,76 @@ def test_the_tail_of_the_row_above_is_cut_off_a_name_crop():
     single = np.full((70, 140, 3), 235, np.uint8)
     single[20:50, 10:120] = 30
     assert drop_neighbour_rows(single).shape == single.shape
+
+
+ROWS = ("name", "father", "grandfather", "surname", "mother", "mother_grandfather", "sex")
+
+
+def _row_box(label, row, conf=0.9, pitch=48, top=250):
+    from kyc.modules.ocr.detector import Detection
+
+    y = top + row * pitch
+    return Detection(0, label, conf, (680, y - 22, 785, y + 22))
+
+
+def test_boxes_on_their_own_rows_stay_as_they_are():
+    from kyc.modules.ocr.rows import place_rows
+
+    located = {k: _row_box(k, i) for i, k in enumerate(ROWS)}
+    placed = place_rows(located, ROWS)
+    assert placed.moved == [] and placed.empty == []
+    assert placed.located == located
+
+
+def test_a_card_without_surname_gets_its_mother_name_back():
+    """The detector never saw a card with an empty surname row: it labels the
+    mother's row "surname" and finds no mother. The row it sits on wins."""
+    from kyc.modules.ocr.rows import place_rows
+
+    located = {k: _row_box(k, i) for i, k in enumerate(ROWS[:3])}
+    located["surname"] = _row_box("surname", 4, conf=0.5)  # on the mother's row
+    located["mother_grandfather"] = _row_box("mother_grandfather", 5)
+    located["sex"] = _row_box("sex", 6)
+    located["portrait"] = _row_box("portrait", 0)  # not a row field: kept
+    placed = place_rows(located, ROWS)
+
+    assert placed.moved == [("surname", "mother")]
+    assert placed.located["mother"].box == located["surname"].box
+    assert "surname" not in placed.located and "portrait" in placed.located
+    assert placed.empty == ["surname"]
+    x1, y1, x2, y2 = placed.boxes["surname"]
+    assert y1 < 250 + 3 * 48 < y2
+
+
+def test_a_stray_box_between_rows_is_dropped():
+    from kyc.modules.ocr.rows import place_rows
+
+    located = {k: _row_box(k, i) for i, k in enumerate(ROWS) if k != "surname"}
+    located["surname"] = _row_box("surname", 3.5, conf=0.2)  # half a row off
+    placed = place_rows(located, ROWS)
+    assert "surname" not in placed.located and placed.empty == ["surname"]
+    assert placed.located["mother"] == located["mother"]
+
+
+def test_too_few_rows_change_nothing():
+    from kyc.modules.ocr.rows import place_rows
+
+    located = {"name": _row_box("surname", 0), "father": _row_box("father", 1)}
+    assert place_rows(located, ROWS).located == located
+
+
+def test_an_empty_optional_row_is_information_not_a_failure():
+    from kyc.core.schemas import Severity
+
+    profile = get_profile("iq_national_card_front")
+    spec = {f.key: f for f in profile.fields}
+    surname = DocumentOcrPipeline._blank_row(spec["last_name"])
+    assert surname.severity is Severity.INFO and surname.message_fa == "این کارت «لقب» ندارد"
+    assert DocumentOcrPipeline._blank_row(spec["mother_name"]).severity is Severity.ERROR
+
+
+def test_the_iraqi_card_places_rows_and_rereads_names():
+    profile = get_profile("iq_national_card_front")
+    assert profile.row_order == ROWS and set(ROWS) <= set(profile.class_names)
+    assert profile.reread_blurred
+    assert not IR_NATIONAL_CARD_FRONT.row_order and not IR_NATIONAL_CARD_FRONT.reread_blurred

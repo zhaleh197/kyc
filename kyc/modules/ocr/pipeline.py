@@ -27,6 +27,7 @@ from kyc.core.imaging import (
 from kyc.core.schemas import Decision, ModuleResult, Reason, Severity, Timer
 
 from . import lexicon, normalize, rectify
+from .rows import place_rows
 from .detector import Detection, FieldDetector, best_per_class
 from .orient import orient
 from .profiles import DocumentProfile, FieldKind, FieldSpec, get_profile
@@ -273,7 +274,22 @@ class DocumentOcrPipeline:
                     card, profile, located, to_frame, orientation, reasons
                 )
 
-            fields, field_reasons = self._read_fields(card, profile, located)
+            empty_rows: dict[str, tuple[int, int, int, int]] = {}
+            if profile.row_order:
+                placement = place_rows(located, profile.row_order)
+                located, empty_rows = placement.located, placement.boxes
+                by_class = {f.detector_class: f for f in profile.fields}
+                for was, row in placement.moved:
+                    a, b = by_class.get(was), by_class.get(row)
+                    if a and b:
+                        reasons.append(Reason.info(
+                            "field_row_corrected",
+                            f"The box labelled {a.key} is on the {b.key} row; read as {b.key}",
+                            f"کادری که «{a.label_fa}» تشخیص داده شده بود روی ردیف «{b.label_fa}» است و همان خوانده شد",
+                            b.key,
+                        ))
+
+            fields, field_reasons = self._read_fields(card, profile, located, empty_rows)
             reasons += field_reasons
             source_boxes = {}
             # Forensics (06) reads the submitted pixels: a downscale, a deskew
@@ -372,8 +388,10 @@ class DocumentOcrPipeline:
         card: np.ndarray,
         profile: DocumentProfile,
         located: dict[str, Detection],
+        empty_rows: dict[str, tuple[int, int, int, int]] | None = None,
     ) -> tuple[dict[str, FieldResult], list[Reason]]:
         cfg = self.settings.ocr
+        empty_rows = empty_rows or {}
         reasons: list[Reason] = []
         results: dict[str, FieldResult] = {}
 
@@ -385,6 +403,11 @@ class DocumentOcrPipeline:
                 kind=spec.kind.value,
             )
             detection = located.get(spec.detector_class)
+            inferred = detection is None and spec.detector_class in empty_rows
+            if inferred:
+                # No box on this row: read where it would be. Nothing sure
+                # there means the row is printed empty on this card.
+                detection = Detection(-1, spec.detector_class, 0.0, empty_rows[spec.detector_class])
             if detection is None:
                 if spec.required:
                     reasons.append(
@@ -415,6 +438,24 @@ class DocumentOcrPipeline:
                 backend_id = profile.text_backend or cfg.text_backend
             recognizer = self._recognizer_factory(backend_id)
             recognition = recognizer.recognize(crop, allowlist=spec.charset_hint)
+            if profile.reread_blurred and spec.kind is FieldKind.TEXT:
+                again = recognizer.recognize(cv2.GaussianBlur(crop, (3, 3), 0), allowlist=spec.charset_hint)
+                if again.confidence > recognition.confidence:
+                    recognition = again
+
+            if inferred:
+                value = self._normalize(spec, recognition.text, profile.keep_letters)
+                if not value or recognition.confidence < cfg.min_field_confidence:
+                    reasons.append(self._blank_row(spec))
+                    results[spec.key] = result
+                    continue
+                result.detection_confidence = 0.0
+                reasons.append(Reason.warn(
+                    "field_box_inferred",
+                    f"{spec.key} was read from where its row should be; the detector found no box",
+                    f"«{spec.label_fa}» از جای ردیفش خوانده شد؛ کادری برایش پیدا نشده بود",
+                    spec.key,
+                ))
 
             result.backend = backend_id
             result.raw = recognition.text
@@ -475,6 +516,24 @@ class DocumentOcrPipeline:
             if found.value is not None:
                 return replace(found, method=f"{found.method}_line")
         return None
+
+    @staticmethod
+    def _blank_row(spec: FieldSpec) -> Reason:
+        if spec.required:
+            return Reason.error(
+                "field_blank",
+                f"The {spec.key} row is empty on this card",
+                f"ردیف «{spec.label_fa}» روی این کارت خالی است",
+                spec.key,
+            )
+        # Some cards are issued without it (no surname): worth saying, not a
+        # reason to doubt the card.
+        return Reason.info(
+            "field_blank",
+            f"This card has no {spec.label_en.lower()}",
+            f"این کارت «{spec.label_fa}» ندارد",
+            spec.key,
+        )
 
     @staticmethod
     def _field_findings(spec: FieldSpec, result: FieldResult) -> list[Reason]:

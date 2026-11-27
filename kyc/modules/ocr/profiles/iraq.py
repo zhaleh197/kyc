@@ -80,6 +80,12 @@ IQ_NATIONAL_CARD_FRONT = DocumentProfile(
     trim_label_colon=True,
     # The name rows sit close: a box takes in the tail of the row above.
     drop_neighbour_rows=True,
+    # Some cards have no surname (لقب): the row is printed empty, and the
+    # detector - which never saw one without it - labels the rows below one
+    # row up. Placing boxes by row puts the mother's name back.
+    row_order=("name", "father", "grandfather", "surname", "mother", "mother_grandfather", "sex"),
+    # The guilloche lines behind the names drop letters on sharp photos.
+    reread_blurred=True,
     validator=_validate_iraq_front,
     fields=(
         FieldSpec("card", "card", FieldKind.CONTAINER, "کارت", "ID card"),
